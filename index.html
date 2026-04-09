@@ -329,7 +329,7 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;bac
 .camp-row:hover{background:rgba(251,22,247,.03);}
 .camp-row.hdr{font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;padding-top:11px;padding-bottom:9px;}
 .camp-row.hdr:hover{background:none;}
-.camp-meta-cols{grid-template-columns:1.4fr 85px 80px 80px 80px 72px 72px 68px;}
+.camp-meta-cols{grid-template-columns:1.4fr 85px 80px 80px 80px 72px 72px 72px 68px;}
 .camp-google-cols{grid-template-columns:1.4fr 85px 80px 80px 80px 80px 72px 68px;}
 .cname{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .cname small{display:block;color:var(--muted);font-size:11px;font-weight:400;margin-top:1px;}
@@ -1221,7 +1221,8 @@ function renderOverviewKPIs() {
     {label:'Investimento Total',  value:f.brl(m.spend),            icon:'💰',change:'+8.4%', accent:'#fb16f7'},
     {label:'Impressões',          value:f.numK(m.impressions),      icon:'👁', change:'+12.1%',accent:'#40c4ff'},
     {label:'Cliques',             value:f.numK(m.clicks),           icon:'🖱️',change:'+9.3%', accent:'#a78bfa'},
-    {label:'Leads / Conv.',       value:f.num(Math.round(m.leads)), icon:'🎯',change:'+5.7%', accent:'#00e5a0'},
+    {label:'Resultados',          value:f.num(Math.round(m.leads)), icon:'🎯',change:'+5.7%', accent:'#00e5a0'},
+    {label:'💬 Conversas',         value:f.num(Math.round(m.msgs||0)), icon:'💬',change:'+5.7%', accent:'#00c9a7'},
     {label:tip('ROAS')+' Médio',  value:f.roas(m.roas),            icon:'📈',change:'+0.3x', accent:'#f5c842'},
     {label:'Custo por Lead ('+tip('CPL')+')', value:f.brl(m.cpl),  icon:'💲',change:'-4.2%', accent:'#fb16f7'},
   ];
@@ -1252,7 +1253,7 @@ function renderAccounts() {
     +'<div class="acc-metrics">'
     +'<div><div class="acc-metric-val" style="color:'+(a.platform==='meta'?'var(--meta)':'var(--google)')+'">'+f.brl((a.spend||0)*mul)+'</div><div class="acc-metric-lbl">Invest.</div></div>'
     +'<div><div class="acc-metric-val">'+f.numK((a.clicks||0)*mul)+'</div><div class="acc-metric-lbl">Cliques</div></div>'
-    +'<div><div class="acc-metric-val">'+f.num(Math.round(((a.leads||a.conversions||0)*mul)))+'</div><div class="acc-metric-lbl">Leads</div></div>'
+    +'<div><div class="acc-metric-val">'+f.num(Math.round(((a.leads||a.conversions||0)*mul)))+'</div><div class="acc-metric-lbl">Result.</div></div>'
     +'<div><div class="acc-metric-val">'+f.roas(a.roas||0)+'</div><div class="acc-metric-lbl">'+tip('ROAS')+'</div></div>'
     +'</div></div>').join('');
 }
@@ -1323,7 +1324,8 @@ function renderMetaSection() {
     +'<div class="pb-right">'
     +'<div><div class="pb-stat-val" style="color:var(--meta)">'+f.brl(m.spend)+'</div><div class="pb-stat-lbl">Investimento</div></div>'
     +'<div><div class="pb-stat-val">'+f.roas(m.roas)+'</div><div class="pb-stat-lbl">'+tip('ROAS')+'</div></div>'
-    +'<div><div class="pb-stat-val">'+f.num(Math.round(m.leads))+'</div><div class="pb-stat-lbl">Leads</div></div>'
+    +'<div><div class="pb-stat-val">'+f.num(Math.round(m.leads))+'</div><div class="pb-stat-lbl">Resultados</div></div>'
+    +'<div><div class="pb-stat-val" style="color:var(--accent)">'+f.num(Math.round(m.msgs||0))+'</div><div class="pb-stat-lbl">💬 Conversas</div></div>'
     +'</div>';
   renderCampaignSelector('meta','campSelectorMeta');
   document.getElementById('kpiMeta').innerHTML=[
@@ -1331,7 +1333,8 @@ function renderMetaSection() {
     {l:'Impressões',v:f.numK(m.impressions),a:'#40c4ff',i:'👁',c:'+11%'},
     {l:'Alcance',v:f.numK(m.reach),a:'#a78bfa',i:'📡',c:'+9.1%'},
     {l:'Cliques',v:f.numK(m.clicks),a:'#0082fb',i:'🖱️',c:'+7.3%'},
-    {l:'Leads',v:f.num(Math.round(m.leads)),a:'#00e5a0',i:'🎯',c:'+5.7%'},
+    {l:'Resultados',v:f.num(Math.round(m.leads)),a:'#00e5a0',i:'🎯',c:'+5.7%'},
+    {l:'💬 Conversas',v:f.num(Math.round(m.msgs||0)),a:'#00c9a7',i:'💬',c:'+5.7%'},
     {l:tip('CPL')+' — Custo por Lead',v:f.brl(m.cpl),a:'#fb16f7',i:'💲',c:'-3.8%'},
     {l:tip('CTR')+' — Taxa de Cliques',v:f.pct(m.ctr),a:'#f5c842',i:'📊',c:'+0.4%'},
     {l:tip('CPM')+' — Custo/Mil Imp.',v:f.brl(m.cpm),a:'#40c4ff',i:'📉',c:'-2.1%'},
@@ -1345,7 +1348,7 @@ function renderMetaSection() {
     +'<span class="pbadge pbadge-meta">'+camps.length+' campanha'+(camps.length!==1?'s':'')+'</span>'
     +(app.activeCampaignId?'<span style="font-size:11px;color:var(--accent);font-weight:500"> — filtrado</span>':'')
     +'</div><div style="font-size:13px;color:var(--muted)">'+f.brl(m.spend)+'</div></div>'
-    +'<div class="camp-row hdr camp-meta-cols"><div>Campanha</div><div>Invest.</div><div>Impressões</div><div>Alcance</div><div>Cliques</div><div>Leads</div><div>'+tip('CPL')+'</div><div>Status</div></div>'
+    +'<div class="camp-row hdr camp-meta-cols"><div>Campanha</div><div>Invest.</div><div>Impressões</div><div>Alcance</div><div>Cliques</div><div>Resultados</div><div>💬 Conversas</div><div>'+tip('CPL')+'</div><div>Status</div></div>'
     +camps.map(c=>'<div class="camp-row camp-meta-cols">'
       +'<div class="cname">'+c.name+'<small>'+c.accName+'</small></div>'
       +'<div class="num">'+f.brl((c.spend||0)*mul)+'</div>'
@@ -1353,6 +1356,7 @@ function renderMetaSection() {
       +'<div class="num">'+f.numK((c.reach||0)*mul)+'</div>'
       +'<div class="num">'+f.numK((c.clicks||0)*mul)+'</div>'
       +'<div class="num">'+Math.round((c.leads||c.conv||0)*mul)+'</div>'
+      +'<div class="num" style="color:var(--accent)">'+Math.round((c.msgs||0)*mul)+'</div>'
       +'<div class="num '+((c.cpl||0)<15?'pos':(c.cpl||0)>25?'neg':'')+'">'+f.brl(c.cpl||0)+'</div>'
       +'<div><span class="sdot '+(c.status==='active'?'s-active':'s-paused')+'"></span>'+(c.status==='active'?'Ativa':'Pausada')+'</div>'
       +'</div>').join('')+'</div>';
