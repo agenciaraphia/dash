@@ -1009,6 +1009,13 @@ function setCustomDate() {
   renderAll();
 }
 function getMultiplier() {
+  // Se algum cliente visível tem dados reais da planilha, não multiplica nada
+  const clients = app.currentUser?.role === 'admin'
+    ? CLIENTS
+    : CLIENTS.filter(c => c.id === app.currentUser?.clientId);
+  const hasRealData = clients.some(c => c._sheetRows);
+  if (hasRealData) return 1;
+  // Multiplicador só para clientes sem planilha conectada (dados mockados)
   return ({'7d':0.23,'15d':0.48,'30d':1,'90d':2.9,'all':8,'custom':0.45})[dateState.filter]||1;
 }
 function getChartDays() {
