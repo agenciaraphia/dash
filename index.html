@@ -662,22 +662,29 @@ function uid() { return Date.now().toString(36) + Math.random().toString(36).sli
 // Extrai o Sheet ID de qualquer formato de link do Google Sheets
 function extractSheetId(url) {
   if (!url) return null;
+  // Formato publicado: /spreadsheets/d/e/2PACX-xxx/pub...
+  const pub = url.match(/\/spreadsheets\/d\/e\/([a-zA-Z0-9_-]+)/);
+  if (pub) return { id: pub[1], published: true };
+  // Formato normal: /spreadsheets/d/ID_CURTO/...
   const m = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
-  return m ? m[1] : null;
+  return m ? { id: m[1], published: false } : null;
 }
 
 // Busca dados via exportação CSV pública — sem bloqueio de CORS
 async function fetchSheetData(sheetUrl) {
-  const id = extractSheetId(sheetUrl);
-  if (!id) throw new Error('Link inválido');
+  const parsed = extractSheetId(sheetUrl);
+  if (!parsed) throw new Error('Link inválido');
+  const { id, published } = parsed;
 
-  // Tenta extrair gid da aba (caso o link contenha #gid=xxx)
   const gidMatch = sheetUrl.match(/[#&]gid=(\d+)/);
   const gid = gidMatch ? gidMatch[1] : '0';
 
-  // /pub?output=csv é a URL pública oficial do Google Sheets — funciona sem auth
-  // /export redireciona para login mesmo com planilha pública quando acessada via proxy
-  const csvUrl = `https://docs.google.com/spreadsheets/d/${id}/pub?output=csv&gid=${gid}`;
+  // Formato publicado (/e/2PACX-...): usa direto sem /d/
+  // Formato normal: monta URL /pub
+  const csvUrl = published
+    ? `https://docs.google.com/spreadsheets/d/e/${id}/pub?output=csv`
+    : `https://docs.google.com/spreadsheets/d/${id}/pub?output=csv&gid=${gid}`;
+
   let res;
   try {
     res = await fetch(csvUrl);
