@@ -794,7 +794,7 @@ function aggregateSheetRows(rows, platform) {
     c.reach       += getCol(row, 'Reach', 'Alcance');
     c.clicks      += getCol(row, 'Link Clicks', 'Clicks', 'Cliques');
     c.results     += getCol(row, 'Results', 'Resultados', 'Conversions', 'Leads');
-    c.msgs        += getCol(row, 'Messaging Conversations', 'Mensagens');
+    c.msgs        += getCol(row, 'Messaging Conversations Started', 'Messaging Conversations', 'Mensagens', 'Conversations Started');
 
     const cpl = getCol(row, 'Cost per Result', 'CPL', 'Custo por resultado');
     if (cpl) { c.cpl_sum += cpl; c.cpl_count++; }
@@ -816,7 +816,8 @@ function aggregateSheetRows(rows, platform) {
     reach:       c.reach,
     clicks:      c.clicks,
     conv:        c.results,
-    leads:       c.results + c.msgs,
+    leads:       c.results,
+    msgs:        c.msgs,
     cpl:         c.cpl_count ? c.cpl_sum / c.cpl_count : (c.results ? c.spend / c.results : 0),
     cpc:         c.cpc_count ? c.cpc_sum / c.cpc_count : (c.clicks ? c.spend / c.clicks : 0),
     ctr:         c.ctr_count ? c.ctr_sum / c.ctr_count : 0,
