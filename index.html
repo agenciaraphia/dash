@@ -736,27 +736,40 @@ function csvToObjects(rows) {
 function parseBRL(v) {
   if (v === null || v === undefined || v === '' || v === '--' || v === '-') return 0;
   if (typeof v === 'number') return v;
-  v = String(v).trim().replace(/R\$\s*/g, '');
-  // Formato pt-BR: 1.234,56 → remove pontos de milhar, troca vírgula por ponto
-  if (v.includes(',')) {
+  v = String(v).trim().replace(/R\$\s*/g, '').trim();
+  // Detecta formato:
+  // pt-BR com milhar:  "1.234,56" → tem ponto E vírgula
+  // pt-BR sem milhar:  "0,11"     → só vírgula
+  // en-US:             "1234.56"  → só ponto
+  const hasDot   = v.includes('.');
+  const hasComma = v.includes(',');
+  if (hasComma && hasDot) {
+    // "1.234,56" — ponto é milhar, vírgula é decimal
     v = v.replace(/\./g, '').replace(',', '.');
+  } else if (hasComma) {
+    // "0,11" — vírgula é decimal
+    v = v.replace(',', '.');
   }
+  // else: já é ponto decimal ou inteiro
   return parseFloat(v) || 0;
 }
 function parseNum(v) {
   if (v === null || v === undefined || v === '' || v === '--' || v === '-') return 0;
   if (typeof v === 'number') return v;
   v = String(v).trim();
-  // Formato pt-BR com vírgula decimal
-  if (v.includes(',')) {
+  const hasDot   = v.includes('.');
+  const hasComma = v.includes(',');
+  if (hasComma && hasDot) {
     v = v.replace(/\./g, '').replace(',', '.');
+  } else if (hasComma) {
+    v = v.replace(',', '.');
   }
   return parseFloat(v) || 0;
 }
 function parsePct(v) {
   if (!v || v === '--') return 0;
   if (typeof v === 'number') return v;
-  return parseFloat(String(v).replace('%','').replace(',','.')) || 0;
+  return parseBRL(String(v).replace('%',''));
 }
 
 // Mapeamento completo de colunas — todos os campos da planilha Meta Ads
@@ -922,40 +935,40 @@ async function loadSheetData(clientId, platform) {
   let objs = null;
   let lastError = null;
 
-  // Tentativa 1: /pubhtml — funciona com planilha publicada na web (Página da Web)
-  const pubHtmlUrl = normalizeToPubHtml(url);
-  if (pubHtmlUrl) {
+  // Tentativa 1: /gviz/tq?tqx=out:csv — funciona com "Compartilhar como Leitor"
+  const gvizUrl = normalizeToGviz(url);
+  if (gvizUrl) {
     try {
-      console.log('[Sheet] Tentando /pubhtml:', pubHtmlUrl);
-      const resp = await fetch(pubHtmlUrl);
+      console.log('[Sheet] Tentando /gviz:', gvizUrl);
+      const resp = await fetch(gvizUrl);
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      const html = await resp.text();
-      objs = parseSheetHtml(html);
-      if (objs.length) console.log('[Sheet] OK via /pubhtml — ' + objs.length + ' linhas, colunas:', Object.keys(objs[0]).slice(0,5));
-      else throw new Error('Tabela vazia no pubhtml');
+      const text = await resp.text();
+      if (text.trim().startsWith('<')) throw new Error('Retornou HTML — planilha sem acesso público');
+      const rows = parseCSV(text);
+      objs = csvToObjects(rows);
+      if (objs.length) console.log('[Sheet] OK via /gviz — ' + objs.length + ' linhas, ex:', JSON.stringify(Object.entries(objs[0]).slice(0,4)));
+      else throw new Error('CSV vazio');
     } catch(e) {
       lastError = e;
-      console.warn('[Sheet] /pubhtml falhou:', e.message);
+      console.warn('[Sheet] /gviz falhou:', e.message);
     }
   }
 
-  // Tentativa 2: /gviz/tq — funciona com "Compartilhar como Leitor" (URL /d/ID)
+  // Tentativa 2: /pubhtml — funciona com planilha "Publicada na web"
   if (!objs) {
-    const gvizUrl = normalizeToGviz(url);
-    if (gvizUrl) {
+    const pubHtmlUrl = normalizeToPubHtml(url);
+    if (pubHtmlUrl) {
       try {
-        console.log('[Sheet] Tentando /gviz:', gvizUrl);
-        const resp = await fetch(gvizUrl);
+        console.log('[Sheet] Tentando /pubhtml:', pubHtmlUrl);
+        const resp = await fetch(pubHtmlUrl);
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
-        const text = await resp.text();
-        if (text.trim().startsWith('<')) throw new Error('Retornou HTML — sem acesso público');
-        const rows = parseCSV(text);
-        objs = csvToObjects(rows);
-        if (objs.length) console.log('[Sheet] OK via /gviz — ' + objs.length + ' linhas');
-        else throw new Error('CSV vazio');
+        const html = await resp.text();
+        objs = parseSheetHtml(html);
+        if (objs.length) console.log('[Sheet] OK via /pubhtml — ' + objs.length + ' linhas');
+        else throw new Error('Tabela vazia no pubhtml');
       } catch(e) {
         lastError = e;
-        console.warn('[Sheet] /gviz falhou:', e.message);
+        console.warn('[Sheet] /pubhtml falhou:', e.message);
       }
     }
   }
