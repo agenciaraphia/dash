@@ -772,141 +772,174 @@ function parsePct(v) {
   return parseBRL(String(v).replace('%',''));
 }
 
-// Mapeamento completo de colunas — todos os campos da planilha Meta Ads
-const META_COL_MAP = {
-  campanha:         ['nome da campanha', 'campanha', 'campaign name'],
-  conjunto:         ['nome do conjunto de anúncios', 'conjunto de anúncios', 'ad set name'],
-  dia:              ['dia', 'day', 'date'],
-  hora:             ['hora do dia (fuso horário da conta de anúncios)', 'hora do dia', 'hour of day'],
-  anuncio:          ['nome do anúncio', 'anúncio', 'ad name'],
-  idCampanha:       ['identificação da campanha', 'campaign id'],
-  status:           ['status de veiculação', 'status de entrega', 'status'],
-  nivel:            ['nível de veiculação', 'delivery level'],
-  alcance:          ['alcance', 'reach'],
-  impressoes:       ['impressões', 'impressoes', 'impressions'],
-  frequencia:       ['frequência', 'frequencia', 'frequency'],
-  configAtrib:      ['configuração de atribuição', 'attribution setting'],
-  tipoResultado:    ['tipo de resultado', 'result type'],
-  resultado:        ['resultados', 'results'],
-  valorUsado:       ['valor usado (brl)', 'valor usado', 'amount spent (brl)', 'amount spent'],
-  custoResultado:   ['custo por resultado', 'cost per result'],
-  inicio:           ['início', 'inicio', 'starts'],
-  termino:          ['término', 'termino', 'ends'],
-  cpc:              ['cpc (todos)', 'cpc (all)', 'cpc'],
-  compras:          ['compras', 'purchases'],
-  custoCompra:      ['custo por compra', 'cost per purchase'],
-  valorCompra:      ['valor de conversão da compra', 'purchase conversion value'],
-  checkoutIni:      ['finalizações de compra iniciadas', 'checkouts initiated'],
-  custoCheckout:    ['custo por finalização de compra iniciada', 'cost per checkout initiated'],
-  valorCheckout:    ['valor de conversão de finalizações de compra iniciadas', 'checkout initiated conversion value'],
-  custoCarrinho:    ['custo por adição ao carrinho', 'cost per add to cart'],
-  addCarrinho:      ['adições ao carrinho', 'adds to cart'],
-  valorCarrinho:    ['valor de conversão de adições ao carrinho', 'add to cart conversion value'],
-  inicioRel:        ['início dos relatórios', 'reporting starts'],
-  fimRel:           ['encerramento dos relatórios', 'reporting ends'],
+// Mapeamento EXATO das colunas da planilha Meta Ads
+// Chaves internas → nome exato da coluna no CSV
+const META_COLS = {
+  campanha:        'Nome da campanha',
+  conjunto:        'Nome do conjunto de anúncios',
+  dia:             'Dia',
+  hora:            'Hora do dia (fuso horário da conta de anúncios)',
+  anuncio:         'Nome do anúncio',
+  idCampanha:      'Identificação da campanha',
+  anuncios:        'Anúncios',
+  status:          'Status de veiculação',
+  nivel:           'Nível de veiculação',
+  alcance:         'Alcance',
+  impressoes:      'Impressões',
+  frequencia:      'Frequência',
+  configAtrib:     'Configuração de atribuição',
+  tipoResultado:   'Tipo de resultado',
+  resultado:       'Resultados',
+  valorUsado:      'Valor usado (BRL)',
+  custoResultado:  'Custo por resultado',
+  inicio:          'Início',
+  termino:         'Término',
+  cpc:             'CPC (todos)',
+  compras:         'Compras',
+  custoCompra:     'Custo por compra',
+  valorCompra:     'Valor de conversão da compra',
+  checkoutIni:     'Finalizações de compra iniciadas',
+  custoCheckout:   'Custo por finalização de compra iniciada',
+  valorCheckout:   'Valor de conversão de finalizações de compra iniciadas',
+  custoCarrinho:   'Custo por adição ao carrinho',
+  addCarrinho:     'Adições ao carrinho',
+  valorCarrinho:   'Valor de conversão de adições ao carrinho',
 };
 
-// Resolve colunas reais do CSV/HTML para as chaves do META_COL_MAP
+// Resolve os nomes exatos do CSV para as chaves internas
+// Tenta match exato primeiro, depois case-insensitive como fallback
 function resolveColumns(headers) {
-  const norm = h => String(h).toLowerCase().trim().replace(/\s+/g, ' ');
   const resolved = {};
-  for (const [key, variants] of Object.entries(META_COL_MAP)) {
-    const found = headers.find(h => variants.includes(norm(h)));
+  for (const [key, exact] of Object.entries(META_COLS)) {
+    // Match exato
+    if (headers.includes(exact)) {
+      resolved[key] = exact;
+      continue;
+    }
+    // Fallback: case-insensitive + trim
+    const lower = exact.toLowerCase().trim();
+    const found = headers.find(h => h.toLowerCase().trim() === lower);
     resolved[key] = found || null;
   }
+  // Log dos campos não encontrados
+  const missing = Object.entries(resolved).filter(([,v])=>!v).map(([k])=>k);
+  if (missing.length) console.warn('[Sheet] Colunas não encontradas:', missing);
   return resolved;
 }
 
 // Agrega TODOS os campos por campanha
 function aggregateMetaSheet(rows) {
   if (!rows.length) return [];
+
+  // Detecta colunas disponíveis no CSV recebido
   const headers = Object.keys(rows[0]);
   const col = resolveColumns(headers);
-  console.log('[Sheet] Colunas mapeadas:', JSON.stringify(col));
+  console.log('[Sheet] Headers reais:', headers.slice(0,6));
+  console.log('[Sheet] Mapeamento:', JSON.stringify(col));
 
-  const g = (r, k) => col[k] ? (r[col[k]] ?? null) : null;
+  // Helper: pega valor de uma linha pela chave interna
+  const get = (row, key) => col[key] ? (row[col[key]] ?? '') : '';
+
   const byCamp = {};
 
-  rows.forEach(r => {
-    const name = g(r,'campanha') ? String(g(r,'campanha')).trim() : '';
+  rows.forEach(row => {
+    const name = String(get(row, 'campanha')).trim();
     if (!name) return;
+
     if (!byCamp[name]) byCamp[name] = {
       name,
-      spend:0, impressions:0, reach:0,
-      leads:0, purchases:0, purchaseValue:0,
-      cartAdds:0, cartValue:0,
-      checkouts:0, checkoutValue:0,
-      // CPC: média ponderada por spend
-      cpc_spend:0, cpc_weighted:0,
+      spend: 0, impressions: 0, reach: 0,
+      resultado: 0,
+      compras: 0, valorCompra: 0,
+      checkoutIni: 0, valorCheckout: 0,
+      addCarrinho: 0, valorCarrinho: 0,
+      cpc_weighted: 0, cpc_spend: 0,
       tiposResultado: new Set(),
       configAtrib: new Set(),
-      inicio:'', termino:'', inicioRel:'', fimRel:'',
-      _rows:0
+      inicio: '', termino: '',
+      _rows: 0,
     };
+
     const c = byCamp[name];
-    const spend = parseBRL(g(r,'valorUsado'));
-    c.spend          += spend;
-    c.impressions    += parseNum(g(r,'impressoes'));
-    const alcVal      = parseNum(g(r,'alcance'));
-    if (alcVal > 0)   c.reach += alcVal;
-    c.leads          += parseNum(g(r,'resultado'));
-    c.purchases      += parseNum(g(r,'compras'));
-    c.purchaseValue  += parseBRL(g(r,'valorCompra'));
-    c.cartAdds       += parseNum(g(r,'addCarrinho'));
-    c.cartValue      += parseBRL(g(r,'valorCarrinho'));
-    c.checkouts      += parseNum(g(r,'checkoutIni'));
-    c.checkoutValue  += parseBRL(g(r,'valorCheckout'));
-    // CPC: ponderado pelo spend da linha (evita soma indevida)
-    const cpc = parseBRL(g(r,'cpc'));
+    const spend = parseBRL(get(row, 'valorUsado'));
+
+    c.spend        += spend;
+    c.impressions  += parseNum(get(row, 'impressoes'));
+
+    const alc = parseNum(get(row, 'alcance'));
+    if (alc > 0) c.reach += alc;
+
+    c.resultado    += parseNum(get(row, 'resultado'));
+    c.compras      += parseNum(get(row, 'compras'));
+    c.valorCompra  += parseBRL(get(row, 'valorCompra'));
+    c.checkoutIni  += parseNum(get(row, 'checkoutIni'));
+    c.valorCheckout+= parseBRL(get(row, 'valorCheckout'));
+    c.addCarrinho  += parseNum(get(row, 'addCarrinho'));
+    c.valorCarrinho+= parseBRL(get(row, 'valorCarrinho'));
+
+    // CPC: média ponderada pelo spend (não soma direta)
+    const cpc = parseBRL(get(row, 'cpc'));
     if (cpc > 0 && spend > 0) {
       c.cpc_weighted += cpc * spend;
       c.cpc_spend    += spend;
     }
-    const tr = g(r,'tipoResultado'); if (tr && String(tr).trim()) c.tiposResultado.add(String(tr).trim());
-    const ca = g(r,'configAtrib');   if (ca && String(ca).trim()) c.configAtrib.add(String(ca).trim());
-    if (!c.inicio)    c.inicio    = g(r,'inicio')    ? String(g(r,'inicio')).trim()    : '';
-    if (!c.termino)   c.termino   = g(r,'termino')   ? String(g(r,'termino')).trim()   : '';
-    if (!c.inicioRel) c.inicioRel = g(r,'inicioRel') ? String(g(r,'inicioRel')).trim() : '';
-    if (!c.fimRel)    c.fimRel    = g(r,'fimRel')    ? String(g(r,'fimRel')).trim()    : '';
+
+    const tr = String(get(row, 'tipoResultado')).trim();
+    if (tr) c.tiposResultado.add(tr);
+
+    const ca = String(get(row, 'configAtrib')).trim();
+    if (ca) c.configAtrib.add(ca);
+
+    if (!c.inicio)  c.inicio  = String(get(row, 'inicio')).trim();
+    if (!c.termino) c.termino = String(get(row, 'termino')).trim();
+
     c._rows++;
   });
 
   return Object.values(byCamp)
-    .filter(c => c._rows > 0 && (c.spend > 0 || c.impressions > 0))
+    .filter(c => c.spend > 0 || c.impressions > 0)
     .map(c => {
-      const conversions = c.purchases > 0 ? c.purchases : c.leads;
-      // Custos calculados (spend / qtd) — mais preciso que somar custo por linha
-      const custoCompra    = c.purchases > 0   ? c.spend / c.purchases   : 0;
-      const custoCheckout  = c.checkouts > 0   ? c.spend / c.checkouts   : 0;
-      const custoCarrinho  = c.cartAdds > 0    ? c.spend / c.cartAdds    : 0;
-      const custoResultado = conversions > 0   ? c.spend / conversions   : 0;
-      const cpl            = custoResultado;
-      // CPC: média ponderada por spend
-      const cpc = c.cpc_spend > 0 ? c.cpc_weighted / c.cpc_spend : 0;
-      const roas = c.purchaseValue > 0 && c.spend > 0 ? c.purchaseValue / c.spend : 0;
+      // Conversões = compras se houver, senão resultados gerais
+      const conversions = c.compras > 0 ? c.compras : c.resultado;
+
+      // Custos calculados corretamente: spend / quantidade
+      const custoResultado = conversions > 0    ? c.spend / conversions    : 0;
+      const custoCompra    = c.compras > 0      ? c.spend / c.compras      : 0;
+      const custoCheckout  = c.checkoutIni > 0  ? c.spend / c.checkoutIni  : 0;
+      const custoCarrinho  = c.addCarrinho > 0  ? c.spend / c.addCarrinho  : 0;
+
+      // CPC médio ponderado
+      const cpc  = c.cpc_spend > 0 ? c.cpc_weighted / c.cpc_spend : 0;
+      const roas = c.valorCompra > 0 && c.spend > 0 ? c.valorCompra / c.spend : 0;
       const cpm  = c.impressions > 0 ? (c.spend / c.impressions) * 1000 : 0;
+
       return {
-        name:         c.name,
-        spend:        c.spend,
-        impressions:  c.impressions,
-        reach:        c.reach,
-        leads:        c.leads,
-        purchases:    c.purchases,
-        purchaseValue:c.purchaseValue,
-        cartAdds:     c.cartAdds,
-        cartValue:    c.cartValue,
-        checkouts:    c.checkouts,
-        checkoutValue:c.checkoutValue,
+        name:           c.name,
+        spend:          c.spend,
+        impressions:    c.impressions,
+        reach:          c.reach,
+        leads:          c.resultado,
+        purchases:      c.compras,
+        purchaseValue:  c.valorCompra,
+        checkouts:      c.checkoutIni,
+        checkoutValue:  c.valorCheckout,
+        cartAdds:       c.addCarrinho,
+        cartValue:      c.valorCarrinho,
         conversions,
-        cpl, cpc, roas, cpm, ctr: 0,
-        custoResultado, custoCompra, custoCheckout, custoCarrinho,
+        cpl:            custoResultado,
+        cpc,
+        roas,
+        cpm,
+        ctr:            0,
+        custoResultado,
+        custoCompra,
+        custoCheckout,
+        custoCarrinho,
         tiposResultado: [...c.tiposResultado].join(', '),
         configAtrib:    [...c.configAtrib].join(' / '),
-        inicio:    c.inicio,
-        termino:   c.termino,
-        inicioRel: c.inicioRel,
-        fimRel:    c.fimRel,
-        status: 'active',
+        inicio:         c.inicio,
+        termino:        c.termino,
+        status:         'active',
       };
     });
 }
