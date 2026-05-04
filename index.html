@@ -1442,197 +1442,150 @@ function renderChart() {
    META SECTION
 ══════════════════════════════════════════ */
 async function renderMetaSection() {
-  document.getElementById('metaBanner').innerHTML='<div style="color:var(--muted);font-size:13px;padding:8px;display:flex;align-items:center;gap:8px"><span style="animation:pulse 1s infinite;display:inline-block">⬡</span> Carregando dados da planilha...</div>';
-  ['kpiMeta','metaCampaigns','creativesMetaGrid','campSelectorMeta'].forEach(id=>{
-    const el=document.getElementById(id); if(el) el.innerHTML='';
-  });
+  document.getElementById('metaBanner').innerHTML='<div style="color:var(--muted);font-size:13px;padding:8px;display:flex;align-items:center;gap:8px"><span style="animation:pulse 1s infinite;display:inline-block">\u26e1</span> Carregando dados da planilha...</div>';
+  ['kpiMeta','metaCampaigns','creativesMetaGrid','campSelectorMeta'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML='';});
 
   const accs = await getAccountsWithSheet('meta');
+  if(!accs.length){document.getElementById('metaBanner').innerHTML='<div style="color:var(--muted);padding:8px">Nenhuma conta Meta Ads configurada.</div>';return;}
 
-  if(!accs.length){
-    document.getElementById('metaBanner').innerHTML='<div style="color:var(--muted);font-size:14px;padding:8px">Nenhuma conta Meta Ads configurada. Adicione a URL da planilha em Gestão de Clientes → Configurar APIs.</div>';
+  const errAccs = accs.filter(a=>a._error);
+  if(errAccs.length){
+    document.getElementById('metaBanner').innerHTML='<div style="background:rgba(255,77,109,.08);border:1px solid rgba(255,77,109,.25);border-radius:10px;padding:14px 16px;width:100%"><div style="font-weight:700;color:var(--red);margin-bottom:6px">\u26a0 Erro ao carregar planilha</div><div style="font-size:12px;color:var(--muted)">'+errAccs.map(a=>'<strong>'+a.clientName+':</strong> '+a._error).join('<br>')+'</div></div>';
     return;
   }
 
-  const errAccs = accs.filter(a => a._error);
-  if (errAccs.length) {
-    const errMsg = errAccs.map(a => '<strong>'+a.clientName+':</strong> '+a._error).join('<br>');
-    document.getElementById('metaBanner').innerHTML=
-      '<div style="width:100%;background:rgba(255,77,109,.08);border:1px solid rgba(255,77,109,.25);border-radius:10px;padding:14px 16px">'
-      +'<div style="font-weight:700;color:var(--red);margin-bottom:6px">⚠ Erro ao carregar planilha</div>'
-      +'<div style="font-size:12px;color:var(--muted);line-height:1.7">'+errMsg+'</div>'
-      +'<div style="margin-top:10px;font-size:12px;padding:10px;background:rgba(255,255,255,.03);border-radius:8px;border-left:3px solid var(--red)">'
-      +'<strong style="color:var(--text)">Como resolver:</strong><br>'
-      +'1. Abra a planilha no Google Sheets<br>'
-      +'2. Menu <strong>Arquivo → Publicar na web</strong><br>'
-      +'3. Selecione a aba correta → escolha <strong>Página da Web</strong><br>'
-      +'4. Clique em <strong>Publicar</strong> → copie a URL gerada (termina em /pubhtml)<br>'
-      +'5. Cole essa URL no campo de configuração do cliente<br>'
-      +'6. Clique em 🔄 Atualizar planilha'
-      +'</div></div>';
-    return;
-  }
-
-  const hasSheet = accs.some(a => a._fromSheet);
-  const mul = getMultiplier();
-  const n = accs.length || 1;
-
-  // Agrega todas as métricas
-  const sum = k => accs.reduce((s,a)=>s+(a[k]||0),0);
-  const avg = k => accs.reduce((s,a)=>s+(a[k]||0),0)/n;
-  const m = {
-    spend:        sum('spend')*mul,
-    impressions:  sum('impressions')*mul,
-    reach:        sum('reach')*mul,
-    leads:        sum('leads')*mul,
-    purchases:    sum('purchases')*mul,
-    purchaseValue:sum('purchaseValue')*mul,
-    cartAdds:     sum('cartAdds')*mul,
-    cartValue:    sum('cartValue')*mul,
-    checkouts:    sum('checkouts')*mul,
-    checkoutValue:sum('checkoutValue')*mul,
-    conversions:  sum('conversions')*mul,
-    roas:         avg('roas'),
-    ctr:          avg('ctr'),
-    cpc:          avg('cpc'),
-    cpm:          avg('cpm'),
-    cpl:          (() => { const tL=sum('leads'); const tS=sum('spend')*mul; return tL>0?tS/tL:0; })(),
-    custoResultado: avg('custoResultado'),
-    custoCompra:    avg('custoCompra'),
-    custoCarrinho:  avg('custoCarrinho'),
-    custoCheckout:  avg('custoCheckout'),
-  };
-
-  const nd = v => v > 0 ? true : false; // tem dado?
-  const sdot = (v, fmt) => v > 0 ? fmt(v) : '<span style="color:var(--muted2);font-size:12px">Sem dados</span>';
-
-  const selLabel = app.activeCampaignId ? ' · <strong>'+app.activeCampaignId+'</strong>' : '';
-  const sheetBadge = hasSheet ? ' <span style="font-size:10px;background:rgba(0,229,160,.12);color:var(--green);border-radius:4px;padding:2px 6px;font-weight:600">📊 Planilha</span>' : '';
-
-  document.getElementById('metaBanner').innerHTML=
-    '<div class="pb-icon">⬡</div>'
-    +'<div><div class="pb-name" style="color:var(--meta)">Meta Ads'+sheetBadge+'</div>'
-    +'<div class="pb-sub">'+accs.length+' conta(s) · '+(DATE_LABELS[dateState.filter]||'período')+selLabel+'</div></div>'
-    +'<div class="pb-right">'
-    +'<div><div class="pb-stat-val" style="color:var(--meta)">'+f.brl(m.spend)+'</div><div class="pb-stat-lbl">Investimento</div></div>'
-    +'<div><div class="pb-stat-val">'+(m.roas>0?f.roas(m.roas):'—')+'</div><div class="pb-stat-lbl">'+tip('ROAS')+'</div></div>'
-    +'<div><div class="pb-stat-val">'+f.num(Math.round(m.purchases||m.leads))+'</div><div class="pb-stat-lbl">Compras/Resultados</div></div>'
-    +'<div><div class="pb-stat-val">'+f.brl(m.purchaseValue)+'</div><div class="pb-stat-lbl">Valor de Conversão</div></div>'
-    +'</div>';
+  // Todas as campanhas das contas carregadas
+  const allCamps = accs.flatMap(a=>(a.campaigns||[]).map(c=>({...c,accName:a.name||a.clientName})));
 
   // Seletor de campanhas
-  const allCamps = accs.flatMap(a=>(a.campaigns||[]).map(c=>({...c,accName:a.name||a.clientName})));
   if(allCamps.length){
     const active=app.activeCampaignId;
-    let selHtml='<div class="camp-selector-wrap"><div class="camp-selector-label">📋 Campanha:</div><div class="camp-selector-pills">';
-    selHtml+='<div class="camp-pill'+((!active)?' active':'')+'" onclick="selectCampaign(null,\'meta\')"><span class="camp-pill-dot"></span>Todas as campanhas</div>';
+    let sel='<div class="camp-selector-wrap"><div class="camp-selector-label">\ud83d\udccb Campanha:</div><div class="camp-selector-pills">';
+    sel+='<div class="camp-pill'+((!active)?' active':'')+'" onclick="selectCampaign(null,\'meta\')"><span class="camp-pill-dot"></span>Todas as campanhas</div>';
     allCamps.forEach(c=>{
-      const name=c.name.replace(/'/g,"\'");
-      selHtml+='<div class="camp-pill'+((active===c.name)?' active':'')+'" onclick="selectCampaign(\''+name+'\',\'meta\')">';
-      selHtml+='<span class="camp-pill-dot s-active"></span>'+c.name+'</div>';
+      const nm=c.name.replace(/\'/g,"\\'");
+      sel+='<div class="camp-pill'+((active===c.name)?' active':'')+'" onclick="selectCampaign(\''+nm+'\',\'meta\')"><span class="camp-pill-dot s-active"></span>'+c.name+'</div>';
     });
-    selHtml+='</div></div>';
-    document.getElementById('campSelectorMeta').innerHTML=selHtml;
+    sel+='</div></div>';
+    document.getElementById('campSelectorMeta').innerHTML=sel;
   }
 
+  // Filtra campanhas — TODOS os calculos partem daqui
   const camps = app.activeCampaignId ? allCamps.filter(c=>c.name===app.activeCampaignId) : allCamps;
+  const mul = getMultiplier();
 
-  // KPIs — todos os campos
+  // Soma campos das campanhas filtradas
+  const cs = k => camps.reduce((s,c)=>s+(c[k]||0),0);
+  const spend        = cs('spend')*mul;
+  const impressions  = cs('impressions')*mul;
+  const reach        = cs('reach')*mul;
+  const leads        = cs('leads')*mul;
+  const purchases    = cs('purchases')*mul;
+  const purchaseValue= cs('purchaseValue')*mul;
+  const checkouts    = cs('checkouts')*mul;
+  const checkoutValue= cs('checkoutValue')*mul;
+  const cartAdds     = cs('cartAdds')*mul;
+  const cartValue    = cs('cartValue')*mul;
+  const conversions  = purchases>0 ? purchases : leads;
+
+  // Calculos derivados — sempre spend/qtd, nunca soma de custos por linha
+  const cpl          = conversions>0    ? spend/conversions    : 0;
+  const custoCompra  = purchases>0      ? spend/purchases      : 0;
+  const custoCheckout= checkouts>0      ? spend/checkouts      : 0;
+  const custoCarrinho= cartAdds>0       ? spend/cartAdds       : 0;
+  const roas         = purchaseValue>0&&spend>0 ? purchaseValue/spend : 0;
+  const cpm          = impressions>0    ? (spend/impressions)*1000 : 0;
+  const cpcW         = camps.reduce((s,c)=>s+(c.cpc||0)*(c.spend||0),0);
+  const cpcS         = camps.reduce((s,c)=>s+(c.cpc>0?c.spend||0:0),0);
+  const cpc          = cpcS>0 ? cpcW/cpcS : 0;
+
+  // Banner
+  const hasSheet=accs.some(a=>a._fromSheet);
+  const badge=hasSheet?' <span style="font-size:10px;background:rgba(0,229,160,.12);color:var(--green);border-radius:4px;padding:2px 6px;font-weight:600">\ud83d\udcca Planilha</span>':'';
+  const filt=app.activeCampaignId?' \u00b7 <strong style="color:var(--accent)">'+app.activeCampaignId+'</strong>':'';
+  document.getElementById('metaBanner').innerHTML=
+    '<div class="pb-icon">\u26e1</div>'
+    +'<div><div class="pb-name" style="color:var(--meta)">Meta Ads'+badge+'</div>'
+    +'<div class="pb-sub">'+camps.length+' campanha(s) \u00b7 '+(DATE_LABELS[dateState.filter]||'per\u00edodo')+filt+'</div></div>'
+    +'<div class="pb-right">'
+    +'<div><div class="pb-stat-val" style="color:var(--meta)">'+f.brl(spend)+'</div><div class="pb-stat-lbl">Investimento</div></div>'
+    +'<div><div class="pb-stat-val">'+(roas>0?f.roas(roas):'\u2014')+'</div><div class="pb-stat-lbl">ROAS</div></div>'
+    +'<div><div class="pb-stat-val">'+f.num(Math.round(purchases||leads))+'</div><div class="pb-stat-lbl">Compras/Result.</div></div>'
+    +'<div><div class="pb-stat-val">'+f.brl(purchaseValue)+'</div><div class="pb-stat-lbl">Val. Convers\u00e3o</div></div>'
+    +'</div>';
+
+  // KPIs
+  const sd=(v,fmt)=>v>0?fmt(v):'<span style="color:var(--muted2);font-size:12px">Sem dados</span>';
   document.getElementById('kpiMeta').className='kpi-grid kpi-grid-5';
   document.getElementById('kpiMeta').innerHTML=[
-    {l:'Investimento',                          v:m.spend,          fmt:f.brl,  a:'#0082fb',i:'💰'},
-    {l:'Impressões',                            v:m.impressions,    fmt:f.numK, a:'#40c4ff',i:'👁'},
-    {l:'Alcance',                               v:m.reach,          fmt:f.numK, a:'#a78bfa',i:'📡'},
-    {l:'Compras',                               v:m.purchases,      fmt:v=>f.num(Math.round(v)), a:'#00e5a0',i:'🛒'},
-    {l:'Resultados',                            v:m.leads,          fmt:v=>f.num(Math.round(v)), a:'#00e5a0',i:'🎯'},
-    {l:tip('CPL')+' — Custo por Resultado',     v:m.cpl,            fmt:f.brl,  a:'#fb16f7',i:'💲'},
-    {l:'Custo por Compra',                      v:m.custoCompra,    fmt:f.brl,  a:'#fb16f7',i:'🏷️'},
-    {l:tip('ROAS')+' — Retorno',                v:m.roas,           fmt:f.roas, a:'#f5c842',i:'📈'},
-    {l:'Val. Conversão Compras',                v:m.purchaseValue,  fmt:f.brl,  a:'#f5c842',i:'💵'},
-    {l:'Finalizações de Compra Iniciadas',       v:m.checkouts,      fmt:v=>f.num(Math.round(v)), a:'#40c4ff',i:'🛍️'},
-    {l:'Custo por Finalização Iniciada',         v:m.custoCheckout,  fmt:f.brl,  a:'#a78bfa',i:'💸'},
-    {l:'Val. Conversão Checkout',               v:m.checkoutValue,  fmt:f.brl,  a:'#a78bfa',i:'💳'},
-    {l:'Adições ao Carrinho',                   v:m.cartAdds,       fmt:v=>f.num(Math.round(v)), a:'#00e5a0',i:'🛒'},
-    {l:'Custo por Adição ao Carrinho',          v:m.custoCarrinho,  fmt:f.brl,  a:'#fb16f7',i:'🏪'},
-    {l:'Val. Conversão Carrinho',               v:m.cartValue,      fmt:f.brl,  a:'#00e5a0',i:'📦'},
-    {l:tip('CPC')+' — Custo por Clique',        v:m.cpc,            fmt:f.brl,  a:'#40c4ff',i:'🖱️'},
-    {l:tip('CPM')+' — Custo/Mil Imp.',          v:m.cpm,            fmt:f.brl,  a:'#0082fb',i:'📉'},
-    {l:tip('CTR')+' — Taxa de Cliques',         v:m.ctr,            fmt:f.pct,  a:'#f5c842',i:'📊'},
-  ].map(d=>'<div class="kpi-card fu" style="--card-accent:'+d.a+'">'
-    +'<div class="kpi-icon">'+d.i+'</div>'
-    +'<div class="kpi-label">'+d.l+'</div>'
-    +'<div class="kpi-value">'+sdot(d.v,d.fmt)+'</div>'
-    +'</div>').join('');
+    {l:'Investimento',                       v:spend,          fmt:f.brl,                    a:'#0082fb',i:'\ud83d\udcb0'},
+    {l:'Impress\u00f5es',                   v:impressions,    fmt:f.numK,                   a:'#40c4ff',i:'\ud83d\udc41'},
+    {l:'Alcance',                            v:reach,          fmt:f.numK,                   a:'#a78bfa',i:'\ud83d\udce1'},
+    {l:'Resultados',                         v:leads,          fmt:v=>f.num(Math.round(v)),  a:'#00e5a0',i:'\ud83c\udfaf'},
+    {l:'Compras',                            v:purchases,      fmt:v=>f.num(Math.round(v)),  a:'#00e5a0',i:'\ud83d\uded2'},
+    {l:'Val. Convers\u00e3o Compras',       v:purchaseValue,  fmt:f.brl,                    a:'#f5c842',i:'\ud83d\udcb5'},
+    {l:tip('ROAS')+' \u2014 Retorno',       v:roas,           fmt:f.roas,                   a:'#f5c842',i:'\ud83d\udcc8'},
+    {l:tip('CPL')+' \u2014 Custo/Result.',  v:cpl,            fmt:f.brl,                    a:'#fb16f7',i:'\ud83d\udcb2'},
+    {l:'Custo por Compra',                   v:custoCompra,    fmt:f.brl,                    a:'#fb16f7',i:'\ud83c\udff7\ufe0f'},
+    {l:'Finaliz. Compra Iniciadas',          v:checkouts,      fmt:v=>f.num(Math.round(v)),  a:'#40c4ff',i:'\ud83d\uded1'},
+    {l:'Val. Convers\u00e3o Checkout',      v:checkoutValue,  fmt:f.brl,                    a:'#a78bfa',i:'\ud83d\udcb3'},
+    {l:'Custo por Finaliza\u00e7\u00e3o', v:custoCheckout,  fmt:f.brl,                    a:'#a78bfa',i:'\ud83d\udcb8'},
+    {l:'Adi\u00e7\u00f5es ao Carrinho',    v:cartAdds,       fmt:v=>f.num(Math.round(v)),  a:'#00e5a0',i:'\ud83d\uded2'},
+    {l:'Val. Convers\u00e3o Carrinho',      v:cartValue,      fmt:f.brl,                    a:'#00e5a0',i:'\ud83d\udce6'},
+    {l:'Custo por Adi\u00e7\u00e3o Cart.',v:custoCarrinho,  fmt:f.brl,                    a:'#fb16f7',i:'\ud83c\udfea'},
+    {l:tip('CPC')+' \u2014 Custo/Clique',  v:cpc,            fmt:f.brl,                    a:'#40c4ff',i:'\ud83d\udda5\ufe0f'},
+    {l:tip('CPM')+' \u2014 Custo/Mil Imp.',v:cpm,            fmt:f.brl,                    a:'#0082fb',i:'\ud83d\udcc9'},
+  ].map(d=>'<div class="kpi-card fu" style="--card-accent:'+d.a+'"><div class="kpi-icon">'+d.i+'</div><div class="kpi-label">'+d.l+'</div><div class="kpi-value">'+sd(d.v,d.fmt)+'</div></div>').join('');
 
-  // Tabela de campanhas — todos os campos
-  if(!camps.length){
-    document.getElementById('metaCampaigns').innerHTML='<div style="padding:24px;color:var(--muted);text-align:center">Nenhuma campanha encontrada.</div>';
-  } else {
-    const tblRows = camps.map(c => {
-      const sp = (c.spend||0)*mul;
-      const imp = (c.impressions||0)*mul;
-      const purch = (c.purchases||0)*mul;
-      const leads = (c.leads||0)*mul;
-      const pval = (c.purchaseValue||0)*mul;
-      const cart = (c.cartAdds||0)*mul;
-      const cartV = (c.cartValue||0)*mul;
-      const chk = (c.checkouts||0)*mul;
-      const chkV = (c.checkoutValue||0)*mul;
-      const cpl = leads > 0 ? sp/leads : (purch > 0 ? sp/purch : 0);
-      const roas = pval > 0 && sp > 0 ? pval/sp : 0;
-      const cpm  = imp > 0 ? (sp/imp)*1000 : 0;
+  // Tabela
+  if(!camps.length){document.getElementById('metaCampaigns').innerHTML='<div style="padding:32px;color:var(--muted);text-align:center">Nenhuma campanha encontrada.</div>';return;}
 
-      const V  = (v,fmt) => v > 0 ? fmt(v) : '<span style="color:var(--muted2)">—</span>';
-      const Vr = (v,fmt,pos,neg) => v > 0 ? '<span class="'+(v<pos?'pos':v>neg?'neg':'')+'" style="color:inherit">'+fmt(v)+'</span>' : '<span style="color:var(--muted2)">—</span>';
+  const V=(v,fmt)=>v>0?fmt(v):'<span style="color:var(--muted2)">\u2014</span>';
+  const Vc=(v,fmt,g,b)=>{if(v<=0)return '<span style="color:var(--muted2)">\u2014</span>';return '<span class="'+(v<=g?'pos':v>=b?'neg':'')+'">'+fmt(v)+'</span>';};
 
-      // Linha principal
-      const mainRow = '<div class="camp-row camp-meta-cols" style="cursor:pointer" onclick="toggleCampDetail(this)">'
-        +'<div class="cname">'+c.name+'<small>'+(c.accName||'')+(c.tiposResultado?' · '+c.tiposResultado:'')+'</small></div>'
-        +'<div class="num">'+f.brl(sp)+'</div>'
-        +'<div class="num">'+V(imp,f.numK)+'</div>'
-        +'<div class="num">'+V(purch,v=>Math.round(v))+'</div>'
-        +'<div class="num">'+V(leads,v=>Math.round(v))+'</div>'
-        +'<div class="num">'+Vr(cpl,f.brl,15,25)+'</div>'
-        +'<div class="num">'+Vr(roas,f.roas,5,1)+'</div>'
-        +'<div class="num">'+V(pval,f.brl)+'</div>'
-        +'<div class="num">'+V(cart,v=>Math.round(v))+'</div>'
-        +'<div class="num">'+V(chk,v=>Math.round(v))+'</div>'
-        +'<div class="num">'+V(cpm,f.brl)+'</div>'
-        +'<div class="num">'+V(c.cpc||0,f.brl)+'</div>'
-        +'<div style="font-size:11px;color:var(--green)">▼ detalhes</div>'
-        +'</div>';
+  const rows=camps.map(c=>{
+    const sp=  (c.spend||0)*mul, imp=(c.impressions||0)*mul;
+    const res= (c.leads||0)*mul, comp=(c.purchases||0)*mul;
+    const pval=(c.purchaseValue||0)*mul, chk=(c.checkouts||0)*mul;
+    const chkV=(c.checkoutValue||0)*mul, cart=(c.cartAdds||0)*mul;
+    const cartV=(c.cartValue||0)*mul;
+    const conv=comp>0?comp:res;
+    const cplR=conv>0?sp/conv:0, roasR=pval>0&&sp>0?pval/sp:0;
+    const cpmR=imp>0?(sp/imp)*1000:0, chkC=chk>0?sp/chk:0, cartC=cart>0?sp/cart:0;
+    const main='<div class="camp-row camp-meta-cols" style="cursor:pointer" onclick="toggleCampDetail(this)">'
+      +'<div class="cname">'+c.name+'<small>'+(c.accName||'')+(c.tiposResultado?' \u00b7 '+c.tiposResultado:'')+'</small></div>'
+      +'<div class="num">'+f.brl(sp)+'</div>'
+      +'<div class="num">'+V(imp,f.numK)+'</div>'
+      +'<div class="num">'+V(res,v=>f.num(Math.round(v)))+'</div>'
+      +'<div class="num">'+V(comp,v=>f.num(Math.round(v)))+'</div>'
+      +'<div class="num">'+V(pval,f.brl)+'</div>'
+      +'<div class="num">'+Vc(roasR,f.roas,10,3)+'</div>'
+      +'<div class="num">'+Vc(cplR,f.brl,5,30)+'</div>'
+      +'<div class="num">'+V(chk,v=>f.num(Math.round(v)))+'</div>'
+      +'<div class="num">'+V(cart,v=>f.num(Math.round(v)))+'</div>'
+      +'<div class="num">'+V(cpmR,f.brl)+'</div>'
+      +'<div class="num">'+V(c.cpc||0,f.brl)+'</div>'
+      +'<div style="font-size:11px;color:var(--muted)">\u25bc</div>'
+      +'</div>';
+    const det='<div class="meta-camp-detail" style="display:none">'
+      +'<div class="mcd-block"><div class="mcd-label">Val. Checkout</div><div class="mcd-val acc">'+V(chkV,f.brl)+'</div></div>'
+      +'<div class="mcd-block"><div class="mcd-label">Val. Carrinho</div><div class="mcd-val">'+V(cartV,f.brl)+'</div></div>'
+      +'<div class="mcd-block"><div class="mcd-label">Custo/Checkout</div><div class="mcd-val">'+V(chkC,f.brl)+'</div></div>'
+      +'<div class="mcd-block"><div class="mcd-label">Custo/Carrinho</div><div class="mcd-val">'+V(cartC,f.brl)+'</div></div>'
+      +'<div class="mcd-block"><div class="mcd-label">Custo/Compra</div><div class="mcd-val">'+V(comp>0?sp/comp:0,f.brl)+'</div></div>'
+      +'<div class="mcd-block"><div class="mcd-label">Atribui\u00e7\u00e3o</div><div class="mcd-val" style="font-size:11px;white-space:normal">'+(c.configAtrib||'\u2014')+'</div></div>'
+      +'<div class="mcd-block"><div class="mcd-label">CPM</div><div class="mcd-val">'+V(cpmR,f.brl)+'</div></div>'
+      +'<div class="mcd-block"><div class="mcd-label">Per\u00edodo</div><div class="mcd-val" style="font-size:11px">'+(c.inicio||'\u2014')+' \u2192 '+(c.termino||'\u2014')+'</div></div>'
+      +'</div>';
+    return main+det;
+  }).join('');
 
-      // Painel de detalhes (expandível)
-      const detail = '<div class="meta-camp-detail" style="display:none">'
-        +'<div class="mcd-block"><div class="mcd-label">Val. Conversão Compras</div><div class="mcd-val acc">'+V(pval,f.brl)+'</div></div>'
-        +'<div class="mcd-block"><div class="mcd-label">Val. Conversão Checkout</div><div class="mcd-val">'+V(chkV,f.brl)+'</div></div>'
-        +'<div class="mcd-block"><div class="mcd-label">Val. Conversão Carrinho</div><div class="mcd-val">'+V(cartV,f.brl)+'</div></div>'
-        +'<div class="mcd-block"><div class="mcd-label">Custo por Compra</div><div class="mcd-val">'+V(c.custoCompra||0,f.brl)+'</div></div>'
-        +'<div class="mcd-block"><div class="mcd-label">Custo por Finaliz. Checkout</div><div class="mcd-val">'+V(c.custoCheckout||0,f.brl)+'</div></div>'
-        +'<div class="mcd-block"><div class="mcd-label">Custo por Adição ao Carrinho</div><div class="mcd-val">'+V(c.custoCarrinho||0,f.brl)+'</div></div>'
-        +'<div class="mcd-block"><div class="mcd-label">Configuração de Atribuição</div><div class="mcd-val" style="font-size:11px;white-space:normal">'+(c.configAtrib||'—')+'</div></div>'
-        +'<div class="mcd-block"><div class="mcd-label">Período da campanha</div><div class="mcd-val" style="font-size:11px">'+(c.inicio||'—')+' → '+(c.termino||'—')+'</div><div class="mcd-tag">Relatório: '+(c.inicioRel||'—')+' → '+(c.fimRel||'—')+'</div></div>'
-        +'</div>';
-
-      return mainRow + detail;
-    }).join('');
-
-    document.getElementById('metaCampaigns').innerHTML=
-      '<div class="camp-table-wrap"><div class="platform-card">'
-      +'<div class="platform-header"><div class="platform-name" style="color:var(--meta)">⬡ Meta Ads '
-      +'<span class="pbadge pbadge-meta">'+camps.length+' campanha'+(camps.length!==1?'s':'')+'</span>'
-      +(app.activeCampaignId?'<span style="font-size:11px;color:var(--accent);font-weight:500"> — filtrado</span>':'')
-      +'</div><div style="font-size:13px;color:var(--muted)">'+f.brl(m.spend)+'</div></div>'
-      +'<div class="camp-row hdr camp-meta-cols">'
-      +'<div>Campanha</div><div>Invest.</div><div>Impressões</div>'
-      +'<div>Compras</div><div>Resultados</div><div>'+tip('CPL')+'</div>'
-      +'<div>'+tip('ROAS')+'</div><div>Val. Compra</div>'
-      +'<div>Carrinho</div><div>Checkout</div>'
-      +'<div>'+tip('CPM')+'</div><div>'+tip('CPC')+'</div><div></div>'
-      +'</div>'
-      +tblRows
-      +'</div></div>';
-  }
+  document.getElementById('metaCampaigns').innerHTML=
+    '<div class="camp-table-wrap"><div class="platform-card">'
+    +'<div class="platform-header"><div class="platform-name" style="color:var(--meta)">\u26e1 Meta Ads <span class="pbadge pbadge-meta">'+camps.length+' campanha'+(camps.length!==1?'s':'')+'</span>'+(app.activeCampaignId?' <span style="font-size:11px;color:var(--accent)">\u2014 filtrado</span>':'')+'</div><div style="font-size:13px;color:var(--muted)">'+f.brl(spend)+'</div></div>'
+    +'<div class="camp-row hdr camp-meta-cols"><div>Campanha</div><div>Invest.</div><div>Impress\u00f5es</div><div>Resultados</div><div>Compras</div><div>Val.Compra</div><div>ROAS</div><div>CPL</div><div>Checkout</div><div>Carrinho</div><div>CPM</div><div>CPC</div><div></div></div>'
+    +rows
+    +'</div></div>';
 }
 
 function toggleCampDetail(row) {
