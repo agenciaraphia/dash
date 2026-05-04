@@ -1455,10 +1455,10 @@ async function renderMetaSection() {
   if(allCamps.length){
     const active=app.activeCampaignId;
     let selHtml='<div class="camp-selector-wrap"><div class="camp-selector-label">📋 Campanha:</div><div class="camp-selector-pills">';
-    selHtml+='<div class="camp-pill'+((!active)?' active':'')+'" onclick="selectCampaign(null,'meta')"><span class="camp-pill-dot"></span>Todas as campanhas</div>';
+    selHtml+='<div class="camp-pill'+((!active)?' active':'')+'" onclick="selectCampaign(null,\'meta\')"><span class="camp-pill-dot"></span>Todas as campanhas</div>';
     allCamps.forEach(c=>{
       const name=c.name.replace(/'/g,"\'");
-      selHtml+='<div class="camp-pill'+((active===c.name)?' active':'')+'" onclick="selectCampaign(''+name+'','meta')">';
+      selHtml+='<div class="camp-pill'+((active===c.name)?' active':'')+'" onclick="selectCampaign(\''+name+'\',\'meta\')">';
       selHtml+='<span class="camp-pill-dot s-active"></span>'+c.name+'</div>';
     });
     selHtml+='</div></div>';
