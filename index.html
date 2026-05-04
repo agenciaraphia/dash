@@ -478,9 +478,10 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;bac
       <button class="df-btn" onclick="setDateFilter('all')">Todo período</button>
       <div class="df-sep"></div>
       <div class="df-custom">
-        <input type="date" class="df-date-input" id="dateFrom" onchange="setCustomDate()"/>
+        <input type="date" class="df-date-input" id="dateFrom"/>
         <span class="df-date-sep">→</span>
-        <input type="date" class="df-date-input" id="dateTo" onchange="setCustomDate()"/>
+        <input type="date" class="df-date-input" id="dateTo"/>
+        <button class="df-btn" onclick="setCustomDate()" style="background:var(--accent-soft);color:var(--accent);border-color:rgba(251,22,247,.35);font-weight:600">Aplicar</button>
       </div>
     </div>
 
@@ -1121,12 +1122,16 @@ function setDateFilter(f) {
 function setCustomDate() {
   const from = document.getElementById('dateFrom').value;
   const to   = document.getElementById('dateTo').value;
-  if(!from||!to) return;
+  if(!from||!to) { showToast('⚠ Selecione as duas datas'); return; }
+  if(from > to)  { showToast('⚠ Data inicial maior que a final'); return; }
   dateState.filter='custom'; dateState.from=from; dateState.to=to;
   document.querySelectorAll('.df-btn').forEach(b=>b.classList.remove('active'));
   const lbl = document.getElementById('chartPeriodLabel');
   if(lbl) lbl.textContent = 'período personalizado';
   renderAll();
+  const sec = document.querySelector('.nav-item.active')?.id;
+  if(sec==='navMeta') renderMetaSection();
+  if(sec==='navGoogle') renderGoogleSection();
 }
 function getMultiplier() {
   return ({'7d':0.23,'15d':0.48,'30d':1,'90d':2.9,'all':8,'custom':0.45})[dateState.filter]||1;
