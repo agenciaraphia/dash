@@ -329,7 +329,7 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;bac
 .camp-row:hover{background:rgba(251,22,247,.03);}
 .camp-row.hdr{font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;padding-top:11px;padding-bottom:9px;}
 .camp-row.hdr:hover{background:none;}
-.camp-meta-cols{grid-template-columns:1.4fr 85px 80px 80px 80px 72px 72px 72px 68px;}
+.camp-meta-cols{grid-template-columns:1.4fr 85px 80px 80px 80px 72px 72px 68px;}
 .camp-google-cols{grid-template-columns:1.4fr 85px 80px 80px 80px 80px 72px 68px;}
 .cname{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .cname small{display:block;color:var(--muted);font-size:11px;font-weight:400;margin-top:1px;}
@@ -454,7 +454,7 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;bac
         <div style="font-size:12px;color:var(--muted)">Atualizado há <span id="lastUpdate">0s</span></div>
         <div id="storageBadge" style="display:none;align-items:center;gap:5px;font-size:11px;color:var(--green);background:rgba(0,229,160,.07);padding:5px 11px;border-radius:20px;border:1px solid rgba(0,229,160,.15)">💾 Dados salvos localmente</div>
         <div class="live-badge"><div class="live-dot"></div>Ao Vivo</div>
-        <button class="btn btn-ghost" onclick="manualRefresh()">🔄 Atualizar</button>
+        <button class="btn btn-ghost" onclick="clearCacheAndRefresh()">🔄 Atualizar planilha</button>
         <button class="btn btn-primary admin-only" onclick="openDrawer('addClient')">+ Cliente</button>
         <button class="btn btn-danger" onclick="doLogout()">Sair →</button>
       </div>
@@ -475,9 +475,6 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;bac
         <input type="date" class="df-date-input" id="dateTo" onchange="setCustomDate()"/>
       </div>
     </div>
-
-    <!-- SHEET STATUS BAR -->
-    <div id="sheetStatusBar" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;min-height:0"></div>
 
     <!-- CLIENT TABS (admin) -->
     <div id="clientTabsWrap"><div class="client-tabs" id="clientTabs"></div></div>
@@ -615,17 +612,10 @@ async function loadFromFirestore() {
     const lb=document.getElementById('loginBtn');
     if(lb){lb.disabled=false;lb.style.opacity='1';lb.style.cursor='pointer';lb.textContent='Entrar no painel →';}
   } catch(e) {
-    console.error('Firestore error:', e.code, e.message);
-    let msg = '⚠ Erro ao conectar com o Firestore.';
-    if(e.code === 'permission-denied') msg = '⚠ Acesso negado. Vá ao Firestore → Regras e publique: allow read, write: if true';
-    if(e.code === 'unavailable') msg = '⚠ Firestore indisponível. Verifique sua internet.';
-    if(e.message && e.message.includes('400')) msg = '⚠ Projeto Firebase não encontrado. Verifique o projectId.';
-    // Show persistent error on login screen
-    const errBox = document.getElementById('loginError');
-    if(errBox){ errBox.textContent = msg; errBox.style.display='block'; }
-    showToast(msg);
+    console.error('Firestore:', e);
+    showToast('⚠ Erro ao conectar com o banco. Verifique as regras do Firestore.');
     const lb2=document.getElementById('loginBtn');
-    if(lb2){lb2.disabled=false;lb2.style.opacity='1';lb2.style.cursor='pointer';lb2.textContent='⟳ Tentar novamente';lb2.onclick=()=>loadFromFirestore();}
+    if(lb2){lb2.disabled=false;lb2.style.opacity='1';lb2.style.cursor='pointer';lb2.textContent='Tentar novamente';}
   }
   showLoadingScreen(false);
 }
@@ -655,282 +645,309 @@ function flashSaved() {
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 
 /* ══════════════════════════════════════════
-   GOOGLE SHEETS LOADER
-   Converte link compartilhado → dados reais
+   GOOGLE SHEETS — PARSER
 ══════════════════════════════════════════ */
-
-// Extrai o Sheet ID de qualquer formato de link do Google Sheets
-function extractSheetId(url) {
-  if (!url) return null;
-  // Formato publicado: /spreadsheets/d/e/2PACX-xxx/pub...
-  const pub = url.match(/\/spreadsheets\/d\/e\/([a-zA-Z0-9_-]+)/);
-  if (pub) return { id: pub[1], published: true };
-  // Formato normal: /spreadsheets/d/ID_CURTO/...
-  const m = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
-  return m ? { id: m[1], published: false } : null;
+// Normaliza qualquer URL de planilha para o endpoint /pubhtml
+// Suporta:
+//   .../pubhtml                     → usa direto
+//   .../pub?output=csv ou /pub?...  → troca para /pubhtml
+//   .../e/PUBID/...                 → constrói /pubhtml
+//   .../d/ID/...                    → usa /gviz/tq (compartilhado como Leitor)
+function normalizeToPubHtml(url) {
+  url = url.trim();
+  // Já é pubhtml
+  if (url.includes('/pubhtml')) return url.split('?')[0];
+  // Tem /e/PUBID — publicado na web
+  const mE = url.match(/spreadsheets\/e\/([^/?#]+)/);
+  if (mE) return 'https://docs.google.com/spreadsheets/d/e/' + mE[1] + '/pubhtml';
+  return null;
+}
+function normalizeToGviz(url) {
+  url = url.trim();
+  const m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (!m) return null;
+  return 'https://docs.google.com/spreadsheets/d/' + m[1] + '/gviz/tq?tqx=out:csv&headers=1';
 }
 
-// Busca dados via exportação CSV pública — sem bloqueio de CORS
-async function fetchSheetData(sheetUrl) {
-  const parsed = extractSheetId(sheetUrl);
-  if (!parsed) throw new Error('Link inválido');
-  const { id, published } = parsed;
-
-  const gidMatch = sheetUrl.match(/[#&]gid=(\d+)/);
-  const gid = gidMatch ? gidMatch[1] : '0';
-
-  // Formato publicado (/e/2PACX-...): usa direto sem /d/
-  // Formato normal: monta URL /pub
-  const csvUrl = published
-    ? `https://docs.google.com/spreadsheets/d/e/${id}/pub?output=csv`
-    : `https://docs.google.com/spreadsheets/d/${id}/pub?output=csv&gid=${gid}`;
-
-  let res;
-  try {
-    res = await fetch(csvUrl);
-  } catch(e) {
-    res = await fetch('https://corsproxy.io/?' + encodeURIComponent(csvUrl));
-  }
-  if (!res.ok) throw new Error('Erro HTTP ' + res.status + '. Verifique se a planilha está publicada na web.');
-  const text = await res.text();
-  return parseCsv(text);
-}
-
-// Parser CSV robusto (lida com campos com vírgula entre aspas)
-function parseCsv(text) {
-  const lines = text.trim().split(/\r?\n/);
-  if (lines.length < 2) return { cols: [], rows: [] };
-
-  function splitLine(line) {
-    const result = []; let cur = ''; let inQ = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') { inQ = !inQ; }
-      else if (ch === ',' && !inQ) { result.push(cur.trim()); cur = ''; }
-      else { cur += ch; }
-    }
-    result.push(cur.trim());
-    return result;
-  }
-
-  const cols = splitLine(lines[0]);
-  const rows = lines.slice(1).map(line => {
-    const vals = splitLine(line);
+// Parseia tabela HTML do /pubhtml e devolve array de objetos {header: valor}
+function parseSheetHtml(html) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  const rows = Array.from(doc.querySelectorAll('table tr'));
+  if (rows.length < 2) return [];
+  const headers = Array.from(rows[0].querySelectorAll('td,th'))
+    .map(td => td.textContent.trim())
+    .filter(h => h); // remove colunas vazias do final
+  const ncols = headers.length;
+  const result = [];
+  for (let i = 1; i < rows.length; i++) {
+    const cells = Array.from(rows[i].querySelectorAll('td,th'));
     const obj = {};
-    cols.forEach((col, i) => {
-      const raw = (vals[i] || '').replace(/^"|"$/g, '');
-      const num = raw === '' ? null : Number(raw.replace(',', '.'));
-      obj[col] = isNaN(num) || raw === '' ? (raw || null) : num;
+    let hasData = false;
+    headers.forEach((h, j) => {
+      const v = cells[j] ? cells[j].textContent.trim() : '';
+      obj[h] = v;
+      if (v) hasData = true;
     });
+    if (hasData) result.push(obj);
+  }
+  return result;
+}
+
+function parseCSV(text) {
+  const rows = [];
+  let inQ = false, cell = '', row = [];
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      if (inQ && text[i+1] === '"') { cell += '"'; i++; }
+      else inQ = !inQ;
+    } else if (ch === ',' && !inQ) {
+      row.push(cell.trim()); cell = '';
+    } else if ((ch === '\n' || ch === '\r') && !inQ) {
+      if (ch === '\r' && text[i+1] === '\n') i++;
+      row.push(cell.trim()); rows.push(row); row = []; cell = '';
+    } else {
+      cell += ch;
+    }
+  }
+  if (cell || row.length) { row.push(cell.trim()); rows.push(row); }
+  return rows;
+}
+
+function csvToObjects(rows) {
+  if (rows.length < 2) return [];
+  const headers = rows[0].map(h => h.replace(/\uFEFF/g, '').trim());
+  return rows.slice(1).filter(r => r.some(c => c)).map(row => {
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = (row[i] || '').trim());
     return obj;
-  }).filter(r => Object.values(r).some(v => v !== null));
-
-  return { cols, rows };
-}
-
-// Normaliza nome de coluna para match flexível
-function colMatch(colName, ...variants) {
-  const n = colName.toLowerCase();
-  return variants.some(v => n.includes(v.toLowerCase()));
-}
-
-// Encontra o valor de uma linha pelo nome flexível de coluna
-function getCol(row, ...variants) {
-  const key = Object.keys(row).find(k => colMatch(k, ...variants));
-  return key ? (row[key] || 0) : 0;
-}
-function getColStr(row, ...variants) {
-  const key = Object.keys(row).find(k => colMatch(k, ...variants));
-  return key ? (row[key] || '') : '';
-}
-
-// Aplica o filtro de data do dashboard sobre uma linha
-function rowInDateRange(dateVal) {
-  if (!dateVal) return true;
-  let d;
-  const s = String(dateVal).trim();
-  // Formato MM/DD/YYYY (como o Google Sheets exporta em CSV)
-  const mdy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (mdy) d = new Date(Number(mdy[3]), Number(mdy[1])-1, Number(mdy[2]));
-  // Formato DD/MM/YYYY (comum no Brasil)
-  else if (s.match(/^\d{2}\/\d{2}\/\d{4}$/) && Number(s.slice(3,5)) <= 12 && Number(s.slice(0,2)) > 12)
-    d = new Date(Number(s.slice(6)), Number(s.slice(3,5))-1, Number(s.slice(0,2)));
-  // Formato YYYY-MM-DD (ISO)
-  else if (s.match(/^\d{4}-\d{2}-\d{2}/)) d = new Date(s.slice(0,10));
-  // Número serial (Excel)
-  else if (!isNaN(Number(s)) && Number(s) > 1000) d = new Date(Math.round((Number(s)-25569)*86400*1000));
-  else d = new Date(s);
-  if (isNaN(d)) return true;
-  const ds = d.toISOString().split('T')[0];
-  const { filter, from, to } = dateState;
-  if (filter === 'custom' && from && to) return ds >= from && ds <= to;
-  const now = new Date(); const past = new Date();
-  const days = { '7d': 7, '15d': 15, '30d': 30, '90d': 90 }[filter];
-  if (days) { past.setDate(now.getDate() - days); return d >= past; }
-  return true; // 'all'
-}
-
-// Transforma as linhas brutas da planilha em objeto agregado por campanha
-function aggregateSheetRows(rows, platform) {
-  // Agrupa por campanha
-  const camps = {};
-  for (const row of rows) {
-    const dateVal = getCol(row, 'Day', 'Date', 'Data', 'Dia');
-    if (!rowInDateRange(dateVal)) continue;
-
-    const name = getColStr(row, 'Campaign Name', 'Nome da campanha', 'Campaign');
-    if (!name) continue;
-
-    if (!camps[name]) camps[name] = {
-      name, platform,
-      spend: 0, impressions: 0, reach: 0, clicks: 0,
-      results: 0, cpl_sum: 0, cpl_count: 0,
-      cpc_sum: 0, cpc_count: 0, ctr_sum: 0, ctr_count: 0,
-      cpm_sum: 0, cpm_count: 0, msgs: 0, days: 0,
-    };
-    const c = camps[name];
-    c.spend       += getCol(row, 'Amount Spent', 'Gasto', 'Spend', 'Investimento');
-    c.impressions += getCol(row, 'Impressions', 'Impressões');
-    c.reach       += getCol(row, 'Reach', 'Alcance');
-    c.clicks      += getCol(row, 'Link Clicks', 'Clicks', 'Cliques');
-    c.results     += getCol(row, 'Results', 'Resultados', 'Conversions', 'Leads');
-    c.msgs        += getCol(row, 'Messaging Conversations Started', 'Messaging Conversations', 'Mensagens', 'Conversations Started');
-
-    const cpl = getCol(row, 'Cost per Result', 'CPL', 'Custo por resultado');
-    if (cpl) { c.cpl_sum += cpl; c.cpl_count++; }
-    const cpc = getCol(row, 'CPC', 'Cost per Link Click', 'Custo por clique');
-    if (cpc) { c.cpc_sum += cpc; c.cpc_count++; }
-    const ctr = getCol(row, 'CTR', 'Link Click-Through Rate', 'Taxa de cliques');
-    if (ctr) { c.ctr_sum += ctr; c.ctr_count++; }
-    const cpm = getCol(row, 'CPM', 'Cost per 1,000', 'Custo por mil');
-    if (cpm) { c.cpm_sum += cpm; c.cpm_count++; }
-    c.days++;
-  }
-
-  // Formata para o shape que o dashboard já espera
-  return Object.values(camps).map(c => ({
-    name: c.name,
-    platform,
-    spend:       c.spend,
-    impressions: c.impressions,
-    reach:       c.reach,
-    clicks:      c.clicks,
-    conv:        c.results,
-    leads:       c.results,
-    msgs:        c.msgs,
-    cpl:         c.cpl_count ? c.cpl_sum / c.cpl_count : (c.results ? c.spend / c.results : 0),
-    cpc:         c.cpc_count ? c.cpc_sum / c.cpc_count : (c.clicks ? c.spend / c.clicks : 0),
-    ctr:         c.ctr_count ? c.ctr_sum / c.ctr_count : 0,
-    cpm:         c.cpm_count ? c.cpm_sum / c.cpm_count : 0,
-    roas:        0, // Meta não exporta ROAS direto — deixa 0 por enquanto
-    status:      'active',
-    accName:     '', // preenchido depois
-  }));
-}
-
-// Carrega dados de planilha de um cliente e injeta em c.accounts + c.sheetRows
-async function loadClientSheetData(client, platform) {
-  const url = platform === 'meta' ? client.metaSheetUrl : client.googleSheetUrl;
-  if (!url) return;
-
-  try {
-    showSheetStatus(client.id, platform, 'loading');
-    const { rows } = await fetchSheetData(url);
-    // Guarda as linhas brutas no cliente para re-filtrar por data depois
-    if (!client._sheetRows) client._sheetRows = {};
-    client._sheetRows[platform] = rows;
-
-    injectSheetIntoClient(client, platform);
-    showSheetStatus(client.id, platform, 'ok');
-  } catch (e) {
-    console.error('Sheet error', client.name, platform, e);
-    showSheetStatus(client.id, platform, 'error', e.message);
-  }
-}
-
-// Converte linhas brutas em accounts/campaigns e injeta no objeto client
-function injectSheetIntoClient(client, platform) {
-  if (!client._sheetRows?.[platform]) return;
-  const campaigns = aggregateSheetRows(client._sheetRows[platform], platform);
-
-  // Totaliza para a "conta"
-  const totSpend       = campaigns.reduce((s, c) => s + c.spend, 0);
-  const totImpressions = campaigns.reduce((s, c) => s + c.impressions, 0);
-  const totClicks      = campaigns.reduce((s, c) => s + c.clicks, 0);
-  const totLeads       = campaigns.reduce((s, c) => s + c.leads, 0);
-  const n = campaigns.length || 1;
-  const avgCpl = campaigns.reduce((s,c) => s + c.cpl, 0) / n;
-  const avgCpc = campaigns.reduce((s,c) => s + c.cpc, 0) / n;
-  const avgCtr = campaigns.reduce((s,c) => s + c.ctr, 0) / n;
-  const avgCpm = campaigns.reduce((s,c) => s + c.cpm, 0) / n;
-
-  campaigns.forEach(c => c.accName = client.name);
-
-  // Mantém accounts de outras plataformas; substitui a desta
-  if (!client.accounts) client.accounts = [];
-  client.accounts = client.accounts.filter(a => a.platform !== platform);
-  client.accounts.push({
-    id:        'sheet_' + platform + '_' + client.id,
-    name:      client.name + ' · ' + (platform === 'meta' ? 'Meta Ads' : 'Google Ads'),
-    platform,
-    spend:       totSpend,
-    impressions: totImpressions,
-    clicks:      totClicks,
-    leads:       totLeads,
-    conversions: totLeads,
-    reach:       campaigns.reduce((s,c)=>s+c.reach,0),
-    cpl:  avgCpl,
-    cpc:  avgCpc,
-    ctr:  avgCtr,
-    cpm:  avgCpm,
-    roas: 0,
-    campaigns,
-    creatives: [],
   });
 }
 
-// Indicador visual de status da planilha (pequeno badge no topbar)
-function showSheetStatus(clientId, platform, status, msg) {
-  const key = clientId + '_' + platform;
-  let el = document.getElementById('sheetStatus_' + key);
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'sheetStatus_' + key;
-    el.style.cssText = 'display:flex;align-items:center;gap:5px;font-size:11px;padding:5px 10px;border-radius:20px;font-weight:600;';
-    const bar = document.getElementById('sheetStatusBar');
-    if (bar) bar.appendChild(el);
+function parseBRL(v) {
+  if (!v) return 0;
+  return parseFloat(v.replace(/[R$\s.]/g,'').replace(',','.')) || 0;
+}
+function parseNum(v) {
+  if (!v || v === '--' || v === '-') return 0;
+  return parseFloat(v.replace(/\./g,'').replace(',','.')) || 0;
+}
+function parsePct(v) {
+  if (!v || v === '--') return 0;
+  return parseFloat(v.replace('%','').replace(',','.')) || 0;
+}
+
+// Mapeamento de colunas da planilha Meta Ads
+// Cada chave tem variações aceitas (case-insensitive, trim)
+const META_COL_MAP = {
+  campanha:       ['nome da campanha', 'campanha', 'campaign name'],
+  conjunto:       ['nome do conjunto de anúncios', 'conjunto de anúncios', 'ad set name'],
+  anuncio:        ['nome do anúncio', 'anúncio', 'ad name'],
+  status:         ['status de veiculação', 'status'],
+  alcance:        ['alcance', 'reach'],
+  impressoes:     ['impressões', 'impressoes', 'impressions'],
+  frequencia:     ['frequência', 'frequencia', 'frequency'],
+  resultado:      ['resultados', 'results'],
+  tipoResultado:  ['tipo de resultado', 'result type'],
+  valorUsado:     ['valor usado (brl)', 'valor usado', 'amount spent (brl)', 'amount spent'],
+  custoResultado: ['custo por resultado', 'cost per result'],
+  cpc:            ['cpc (todos)', 'cpc (all)', 'cpc'],
+  compras:        ['compras', 'purchases'],
+  custoCompra:    ['custo por compra', 'cost per purchase'],
+  valorCompra:    ['valor de conversão da compra', 'purchase conversion value'],
+  inicio:         ['início', 'inicio', 'starts'],
+  termino:        ['término', 'termino', 'ends'],
+  checkoutIni:    ['finalizações de compra iniciadas', 'checkouts initiated'],
+  custoCheckout:  ['custo por finalização de compra iniciada'],
+  addCarrinho:    ['adições ao carrinho', 'adds to cart'],
+  custoCarrinho:  ['custo por adição ao carrinho'],
+};
+
+// Resolve colunas reais do CSV para as chaves do META_COL_MAP
+function resolveColumns(headers) {
+  const norm = h => h.toLowerCase().trim().replace(/\s+/g, ' ');
+  const resolved = {};
+  for (const [key, variants] of Object.entries(META_COL_MAP)) {
+    const found = headers.find(h => variants.includes(norm(h)));
+    resolved[key] = found || null;
   }
-  const label = (platform === 'meta' ? 'Meta' : 'Google') + ' Planilha';
-  if (status === 'loading') {
-    el.style.background = 'rgba(245,200,66,.1)'; el.style.color = 'var(--yellow)';
-    el.style.border = '1px solid rgba(245,200,66,.2)';
-    el.innerHTML = '<span style="animation:pulse 1s infinite">⟳</span> ' + label + ' carregando…';
-  } else if (status === 'ok') {
-    el.style.background = 'rgba(0,229,160,.08)'; el.style.color = 'var(--green)';
-    el.style.border = '1px solid rgba(0,229,160,.18)';
-    el.innerHTML = '✓ ' + label;
-    setTimeout(() => { if(el) el.style.opacity = '0.5'; }, 4000);
-  } else {
-    el.style.background = 'rgba(255,77,109,.08)'; el.style.color = 'var(--red)';
-    el.style.border = '1px solid rgba(255,77,109,.2)';
-    el.innerHTML = '⚠ ' + label + (msg ? ': ' + msg.slice(0, 40) : '');
+  return resolved;
+}
+
+// Mantido para compatibilidade (usado abaixo)
+const META_COL = {
+  campanha:       'Nome da campanha',
+  valorUsado:     'Valor usado (BRL)',
+  impressoes:     'Impressões',
+  alcance:        'Alcance',
+  resultado:      'Resultados',
+  cpc:            'CPC (todos)',
+  compras:        'Compras',
+  valorCompra:    'Valor de conversão da compra',
+  addCarrinho:    'Adições ao carrinho',
+};
+
+// Agrega linhas por campanha para montar estrutura de campaigns
+function aggregateMetaSheet(rows) {
+  if (!rows.length) return [];
+  // Resolve colunas dinamicamente a partir dos headers reais
+  const headers = Object.keys(rows[0]);
+  const col = resolveColumns(headers);
+  console.log('[Sheet] Mapeamento de colunas:', col);
+
+  const byCamp = {};
+  rows.forEach(r => {
+    const name = (col.campanha ? r[col.campanha] : '') || 'Sem nome';
+    if (!byCamp[name]) byCamp[name] = {
+      name, spend:0, impressions:0, reach:0, clicks:0,
+      leads:0, conversions:0, cpc:0, cpl:0, ctr:0, cpm:0, roas:0,
+      purchases:0, purchaseValue:0, cartAdds:0,
+      _rows: 0
+    };
+    const c = byCamp[name];
+    c.spend        += parseBRL(col.valorUsado   ? r[col.valorUsado]   : '');
+    c.impressions  += parseNum(col.impressoes   ? r[col.impressoes]   : '');
+    c.reach        += parseNum(col.alcance      ? r[col.alcance]      : '');
+    c.leads        += parseNum(col.resultado    ? r[col.resultado]    : '');
+    c.purchases    += parseNum(col.compras      ? r[col.compras]      : '');
+    c.purchaseValue+= parseBRL(col.valorCompra  ? r[col.valorCompra]  : '');
+    c.cartAdds     += parseNum(col.addCarrinho  ? r[col.addCarrinho]  : '');
+    // CPC linha a linha (média será calculada depois)
+    const cpcVal = parseFloat((col.cpc ? r[col.cpc] : '0') || '0') || 0;
+    c.cpc += cpcVal;
+    c._rows++;
+  });
+
+  return Object.values(byCamp).map(c => {
+    const n = c._rows || 1;
+    c.cpl  = c.leads > 0 ? c.spend / c.leads : 0;
+    c.cpc  = c.cpc / n;
+    c.roas = c.purchaseValue > 0 && c.spend > 0 ? c.purchaseValue / c.spend : 0;
+    c.cpm  = c.impressions > 0 ? (c.spend / c.impressions) * 1000 : 0;
+    c.status = 'active';
+    c.conversions = c.purchases || c.leads;
+    delete c._rows;
+    return c;
+  });
+}
+
+// Cache de dados de planilha carregados
+const sheetCache = {};
+
+async function loadSheetData(clientId, platform) {
+  const cacheKey = clientId + '_' + platform;
+  if (sheetCache[cacheKey] !== undefined) return sheetCache[cacheKey];
+
+  const cl = CLIENTS.find(c => c.id === clientId);
+  if (!cl) { sheetCache[cacheKey] = null; return null; }
+
+  const url = (platform === 'meta' ? cl.metaSheetUrl : cl.googleSheetUrl || '').trim();
+  if (!url) { sheetCache[cacheKey] = null; return null; }
+
+  const setErr = msg => {
+    sheetCache[cacheKey] = {_error: msg, _fromSheet: true, clientName: cl.name};
+    return sheetCache[cacheKey];
+  };
+
+  let objs = null;
+  let lastError = null;
+
+  // Tentativa 1: /pubhtml — funciona com planilha publicada na web (Página da Web)
+  const pubHtmlUrl = normalizeToPubHtml(url);
+  if (pubHtmlUrl) {
+    try {
+      console.log('[Sheet] Tentando /pubhtml:', pubHtmlUrl);
+      const resp = await fetch(pubHtmlUrl);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const html = await resp.text();
+      objs = parseSheetHtml(html);
+      if (objs.length) console.log('[Sheet] OK via /pubhtml — ' + objs.length + ' linhas, colunas:', Object.keys(objs[0]).slice(0,5));
+      else throw new Error('Tabela vazia no pubhtml');
+    } catch(e) {
+      lastError = e;
+      console.warn('[Sheet] /pubhtml falhou:', e.message);
+    }
+  }
+
+  // Tentativa 2: /gviz/tq — funciona com "Compartilhar como Leitor" (URL /d/ID)
+  if (!objs) {
+    const gvizUrl = normalizeToGviz(url);
+    if (gvizUrl) {
+      try {
+        console.log('[Sheet] Tentando /gviz:', gvizUrl);
+        const resp = await fetch(gvizUrl);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const text = await resp.text();
+        if (text.trim().startsWith('<')) throw new Error('Retornou HTML — sem acesso público');
+        const rows = parseCSV(text);
+        objs = csvToObjects(rows);
+        if (objs.length) console.log('[Sheet] OK via /gviz — ' + objs.length + ' linhas');
+        else throw new Error('CSV vazio');
+      } catch(e) {
+        lastError = e;
+        console.warn('[Sheet] /gviz falhou:', e.message);
+      }
+    }
+  }
+
+  if (!objs || !objs.length) {
+    return setErr((lastError?.message || 'Erro ao carregar') + ' — Certifique-se de que a planilha está publicada na web como Página da Web (Arquivo → Publicar na web → Página da Web).');
+  }
+
+  try {
+    const campaigns = aggregateMetaSheet(objs);
+    if (!campaigns.length) return setErr('Nenhuma campanha encontrada. Verifique se a coluna "Nome da campanha" existe na planilha.');
+
+    const account = {
+      id: clientId + '_' + platform + '_sheet',
+      name: cl.name, platform, campaigns,
+      spend:       campaigns.reduce((s,c)=>s+c.spend, 0),
+      impressions: campaigns.reduce((s,c)=>s+c.impressions, 0),
+      reach:       campaigns.reduce((s,c)=>s+c.reach, 0),
+      clicks:      campaigns.reduce((s,c)=>s+c.clicks, 0),
+      leads:       campaigns.reduce((s,c)=>s+c.leads, 0),
+      conversions: campaigns.reduce((s,c)=>s+c.conversions, 0),
+      roas:        campaigns.length ? campaigns.reduce((s,c)=>s+c.roas,0)/campaigns.length : 0,
+      ctr:  0,
+      cpc:  campaigns.length ? campaigns.reduce((s,c)=>s+c.cpc,0)/campaigns.length : 0,
+      cpm:  campaigns.length ? campaigns.reduce((s,c)=>s+c.cpm,0)/campaigns.length : 0,
+      cpl:  (() => {
+        const tL = campaigns.reduce((s,c)=>s+c.leads,0);
+        const tS = campaigns.reduce((s,c)=>s+c.spend,0);
+        return tL > 0 ? tS / tL : 0;
+      })(),
+      _fromSheet: true,
+    };
+    sheetCache[cacheKey] = account;
+    return account;
+  } catch(e) {
+    return setErr('Erro ao processar dados: ' + e.message);
   }
 }
 
-// Carrega planilhas de todos os clientes visíveis e re-renderiza
-async function loadAllSheets() {
-  const clients = app.currentUser?.role === 'admin'
-    ? CLIENTS
-    : CLIENTS.filter(c => c.id === app.currentUser?.clientId);
+function invalidateSheetCache(clientId) {
+  Object.keys(sheetCache).filter(k => k.startsWith(clientId)).forEach(k => delete sheetCache[k]);
+}
 
-  const tasks = [];
+// Versão async de getAccounts que injeta dados da planilha
+async function getAccountsWithSheet(platform) {
+  const clients = getClients();
+  const accounts = [];
   for (const cl of clients) {
-    if ((cl.platforms || []).includes('meta') && cl.metaSheetUrl)
-      tasks.push(loadClientSheetData(cl, 'meta').then(() => { injectSheetIntoClient(cl, 'meta'); renderAll(); }));
-    if ((cl.platforms || []).includes('google') && cl.googleSheetUrl)
-      tasks.push(loadClientSheetData(cl, 'google').then(() => { injectSheetIntoClient(cl, 'google'); renderAll(); }));
+    const sheetAcc = await loadSheetData(cl.id, platform);
+    if (sheetAcc && !sheetAcc._error) {
+      accounts.push({...sheetAcc, clientName: cl.name});
+    } else if (sheetAcc && sheetAcc._error) {
+      // Mantém entrada com erro para exibir no UI
+      accounts.push({...sheetAcc, clientName: cl.name, campaigns: []});
+    } else {
+      // fallback: contas cadastradas manualmente
+      (cl.accounts || []).filter(a => !platform || a.platform === platform)
+        .forEach(a => accounts.push({...a, clientName: cl.name}));
+    }
   }
-  await Promise.allSettled(tasks);
+  return accounts;
 }
 
 /* ══════════════════════════════════════════
@@ -979,14 +996,6 @@ function setDateFilter(f) {
     b.classList.toggle('active', b.getAttribute('onclick') === "setDateFilter('"+f+"')"));
   const lbl = document.getElementById('chartPeriodLabel');
   if(lbl) lbl.textContent = DATE_LABELS[f] || 'período';
-  // Re-agrega dados da planilha com o novo período, sem rebuscar
-  if (app.currentUser) {
-    const clients = app.currentUser.role === 'admin' ? CLIENTS : CLIENTS.filter(c=>c.id===app.currentUser.clientId);
-    clients.forEach(cl => {
-      if (cl._sheetRows?.meta)   injectSheetIntoClient(cl, 'meta');
-      if (cl._sheetRows?.google) injectSheetIntoClient(cl, 'google');
-    });
-  }
   renderAll();
   const sec = document.querySelector('.nav-item.active')?.id;
   if(sec==='navMeta') renderMetaSection();
@@ -1000,23 +1009,9 @@ function setCustomDate() {
   document.querySelectorAll('.df-btn').forEach(b=>b.classList.remove('active'));
   const lbl = document.getElementById('chartPeriodLabel');
   if(lbl) lbl.textContent = 'período personalizado';
-  if (app.currentUser) {
-    const clients = app.currentUser.role === 'admin' ? CLIENTS : CLIENTS.filter(c=>c.id===app.currentUser.clientId);
-    clients.forEach(cl => {
-      if (cl._sheetRows?.meta)   injectSheetIntoClient(cl, 'meta');
-      if (cl._sheetRows?.google) injectSheetIntoClient(cl, 'google');
-    });
-  }
   renderAll();
 }
 function getMultiplier() {
-  // Se algum cliente visível tem dados reais da planilha, não multiplica nada
-  const clients = app.currentUser?.role === 'admin'
-    ? CLIENTS
-    : CLIENTS.filter(c => c.id === app.currentUser?.clientId);
-  const hasRealData = clients.some(c => c._sheetRows);
-  if (hasRealData) return 1;
-  // Multiplicador só para clientes sem planilha conectada (dados mockados)
   return ({'7d':0.23,'15d':0.48,'30d':1,'90d':2.9,'all':8,'custom':0.45})[dateState.filter]||1;
 }
 function getChartDays() {
@@ -1111,7 +1106,6 @@ function initApp() {
   document.getElementById('dateFrom').value=past.toISOString().split('T')[0];
 
   showSection('overview'); renderAll(); startRefreshTimer();
-  loadAllSheets();
 }
 
 /* ══════════════════════════════════════════
@@ -1222,8 +1216,7 @@ function renderOverviewKPIs() {
     {label:'Investimento Total',  value:f.brl(m.spend),            icon:'💰',change:'+8.4%', accent:'#fb16f7'},
     {label:'Impressões',          value:f.numK(m.impressions),      icon:'👁', change:'+12.1%',accent:'#40c4ff'},
     {label:'Cliques',             value:f.numK(m.clicks),           icon:'🖱️',change:'+9.3%', accent:'#a78bfa'},
-    {label:'Resultados',          value:f.num(Math.round(m.leads)), icon:'🎯',change:'+5.7%', accent:'#00e5a0'},
-    {label:'💬 Conversas',         value:f.num(Math.round(m.msgs||0)), icon:'💬',change:'+5.7%', accent:'#00c9a7'},
+    {label:'Leads / Conv.',       value:f.num(Math.round(m.leads)), icon:'🎯',change:'+5.7%', accent:'#00e5a0'},
     {label:tip('ROAS')+' Médio',  value:f.roas(m.roas),            icon:'📈',change:'+0.3x', accent:'#f5c842'},
     {label:'Custo por Lead ('+tip('CPL')+')', value:f.brl(m.cpl),  icon:'💲',change:'-4.2%', accent:'#fb16f7'},
   ];
@@ -1254,7 +1247,7 @@ function renderAccounts() {
     +'<div class="acc-metrics">'
     +'<div><div class="acc-metric-val" style="color:'+(a.platform==='meta'?'var(--meta)':'var(--google)')+'">'+f.brl((a.spend||0)*mul)+'</div><div class="acc-metric-lbl">Invest.</div></div>'
     +'<div><div class="acc-metric-val">'+f.numK((a.clicks||0)*mul)+'</div><div class="acc-metric-lbl">Cliques</div></div>'
-    +'<div><div class="acc-metric-val">'+f.num(Math.round(((a.leads||a.conversions||0)*mul)))+'</div><div class="acc-metric-lbl">Result.</div></div>'
+    +'<div><div class="acc-metric-val">'+f.num(Math.round(((a.leads||a.conversions||0)*mul)))+'</div><div class="acc-metric-lbl">Leads</div></div>'
     +'<div><div class="acc-metric-val">'+f.roas(a.roas||0)+'</div><div class="acc-metric-lbl">'+tip('ROAS')+'</div></div>'
     +'</div></div>').join('');
 }
@@ -1309,112 +1302,255 @@ function renderChart() {
 /* ══════════════════════════════════════════
    META SECTION
 ══════════════════════════════════════════ */
-function renderMetaSection() {
-  const accs=getAccounts('meta');
+async function renderMetaSection() {
+  // Mostra loading
+  document.getElementById('metaBanner').innerHTML='<div style="color:var(--muted);font-size:13px;padding:8px;display:flex;align-items:center;gap:8px"><span style="animation:pulse 1s infinite;display:inline-block">⬡</span> Carregando dados da planilha...</div>';
+  ['kpiMeta','metaCampaigns','creativesMetaGrid','campSelectorMeta'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.innerHTML='';
+  });
+
+  const accs = await getAccountsWithSheet('meta');
+
   if(!accs.length){
-    document.getElementById('metaBanner').innerHTML='<div style="color:var(--muted);font-size:14px;padding:8px">Nenhuma conta Meta Ads.</div>';
-    ['kpiMeta','metaCampaigns','creativesMetaGrid','campSelectorMeta'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML='';});
+    document.getElementById('metaBanner').innerHTML='<div style="color:var(--muted);font-size:14px;padding:8px">Nenhuma conta Meta Ads configurada. Adicione a URL da planilha em Gestão de Clientes → Configurar APIs.</div>';
     return;
   }
-  const m=getFilteredMetrics('meta');
-  const selLabel=app.activeCampaignId?' · <strong>'+app.activeCampaignId+'</strong>':'';
+
+  // Exibe erros de carregamento de planilha
+  const errAccs = accs.filter(a => a._error);
+  if (errAccs.length) {
+    const errMsg = errAccs.map(a => '<strong>'+a.clientName+':</strong> '+a._error).join('<br>');
+    document.getElementById('metaBanner').innerHTML=
+      '<div style="width:100%;background:rgba(255,77,109,.08);border:1px solid rgba(255,77,109,.25);border-radius:10px;padding:14px 16px">'
+      +'<div style="font-weight:700;color:var(--red);margin-bottom:6px">⚠ Erro ao carregar planilha</div>'
+      +'<div style="font-size:12px;color:var(--muted);line-height:1.7">'+errMsg+'</div>'
+      +'<div style="margin-top:10px;font-size:12px;padding:10px;background:rgba(255,255,255,.03);border-radius:8px;border-left:3px solid var(--red)">'
+      +'<strong style="color:var(--text)">Como resolver:</strong><br>'
+      +'1. Abra a planilha no Google Sheets<br>'
+      +'2. Menu <strong>Arquivo → Publicar na web</strong><br>'
+      +'3. Selecione a aba correta → escolha <strong>Página da Web</strong><br>'
+      +'4. Clique em <strong>Publicar</strong> → copie a URL gerada (termina em /pubhtml)<br>'
+      +'5. Cole essa URL no campo de configuração do cliente<br>'
+      +'6. Clique em 🔄 Atualizar planilha'
+      +'</div></div>';
+    return;
+  }
+
+  // Verifica se tem dados reais da planilha
+  const hasSheet = accs.some(a => a._fromSheet);
+  const nd = v => (v === 0 && !hasSheet) ? '<span style="color:var(--muted2);font-size:12px">Sem dados</span>' : v;
+
+  // Agrega métricas
+  const mul = getMultiplier();
+  const n = accs.length || 1;
+  const m = {
+    spend:       accs.reduce((s,a)=>s+(a.spend||0),0)*mul,
+    impressions: accs.reduce((s,a)=>s+(a.impressions||0),0)*mul,
+    clicks:      accs.reduce((s,a)=>s+(a.clicks||0),0)*mul,
+    reach:       accs.reduce((s,a)=>s+(a.reach||0),0)*mul,
+    leads:       accs.reduce((s,a)=>s+(a.leads||0),0)*mul,
+    conversions: accs.reduce((s,a)=>s+(a.conversions||0),0)*mul,
+    roas:        accs.reduce((s,a)=>s+(a.roas||0),0)/n,
+    ctr:         accs.reduce((s,a)=>s+(a.ctr||0),0)/n,
+    cpc:         accs.reduce((s,a)=>s+(a.cpc||0),0)/n,
+    cpm:         accs.reduce((s,a)=>s+(a.cpm||0),0)/n,
+    cpl:         accs.reduce((s,a)=>s+(a.cpl||0),0)/n,
+  };
+
+  const selLabel = app.activeCampaignId ? ' · <strong>'+app.activeCampaignId+'</strong>' : '';
+  const sheetBadge = hasSheet ? ' <span style="font-size:10px;background:rgba(0,229,160,.12);color:var(--green);border-radius:4px;padding:2px 6px;font-weight:600">📊 Planilha</span>' : '';
+
   document.getElementById('metaBanner').innerHTML=
     '<div class="pb-icon">⬡</div>'
-    +'<div><div class="pb-name" style="color:var(--meta)">Meta Ads</div>'
-    +'<div class="pb-sub">'+accs.length+' conta(s) · '+( DATE_LABELS[dateState.filter]||'período')+selLabel+'</div></div>'
+    +'<div><div class="pb-name" style="color:var(--meta)">Meta Ads'+sheetBadge+'</div>'
+    +'<div class="pb-sub">'+accs.length+' conta(s) · '+(DATE_LABELS[dateState.filter]||'período')+selLabel+'</div></div>'
     +'<div class="pb-right">'
     +'<div><div class="pb-stat-val" style="color:var(--meta)">'+f.brl(m.spend)+'</div><div class="pb-stat-lbl">Investimento</div></div>'
-    +'<div><div class="pb-stat-val">'+f.roas(m.roas)+'</div><div class="pb-stat-lbl">'+tip('ROAS')+'</div></div>'
-    +'<div><div class="pb-stat-val">'+f.num(Math.round(m.leads))+'</div><div class="pb-stat-lbl">Resultados</div></div>'
-    +'<div><div class="pb-stat-val" style="color:var(--accent)">'+f.num(Math.round(m.msgs||0))+'</div><div class="pb-stat-lbl">💬 Conversas</div></div>'
+    +'<div><div class="pb-stat-val">'+(m.roas>0?f.roas(m.roas):'—')+'</div><div class="pb-stat-lbl">'+tip('ROAS')+'</div></div>'
+    +'<div><div class="pb-stat-val">'+f.num(Math.round(m.leads))+'</div><div class="pb-stat-lbl">Leads/Resultados</div></div>'
     +'</div>';
-  renderCampaignSelector('meta','campSelectorMeta');
+
+  // Campanha selector usando dados da planilha
+  const allCamps = accs.flatMap(a=>(a.campaigns||[]).map(c=>({...c,accName:a.name||a.clientName})));
+  if(allCamps.length){
+    const active=app.activeCampaignId;
+    let selHtml='<div class="camp-selector-wrap"><div class="camp-selector-label">📋 Campanha:</div><div class="camp-selector-pills">';
+    selHtml+='<div class="camp-pill'+((!active)?' active':'')+'" onclick="selectCampaign(null,\'meta\')"><span class="camp-pill-dot"></span>Todas as campanhas</div>';
+    allCamps.forEach(c=>{
+      const name=c.name.replace(/'/g,"\\'");
+      selHtml+='<div class="camp-pill'+((active===c.name)?' active':'')+'" onclick="selectCampaign(\''+name+'\',\'meta\')">';
+      selHtml+='<span class="camp-pill-dot s-active"></span>'+c.name+'</div>';
+    });
+    selHtml+='</div></div>';
+    document.getElementById('campSelectorMeta').innerHTML=selHtml;
+  }
+
+  // Filtra campanhas
+  const camps = app.activeCampaignId
+    ? allCamps.filter(c=>c.name===app.activeCampaignId)
+    : allCamps;
+
+  // KPIs
+  const kpiVal = (v, fmt) => v > 0 ? fmt(v) : '<span style="color:var(--muted2);font-size:13px">Sem dados</span>';
   document.getElementById('kpiMeta').innerHTML=[
-    {l:'Investimento',v:f.brl(m.spend),a:'#0082fb',i:'💰',c:'+8.4%'},
-    {l:'Impressões',v:f.numK(m.impressions),a:'#40c4ff',i:'👁',c:'+11%'},
-    {l:'Alcance',v:f.numK(m.reach),a:'#a78bfa',i:'📡',c:'+9.1%'},
-    {l:'Cliques',v:f.numK(m.clicks),a:'#0082fb',i:'🖱️',c:'+7.3%'},
-    {l:'Resultados',v:f.num(Math.round(m.leads)),a:'#00e5a0',i:'🎯',c:'+5.7%'},
-    {l:'💬 Conversas',v:f.num(Math.round(m.msgs||0)),a:'#00c9a7',i:'💬',c:'+5.7%'},
-    {l:tip('CPL')+' — Custo por Lead',v:f.brl(m.cpl),a:'#fb16f7',i:'💲',c:'-3.8%'},
-    {l:tip('CTR')+' — Taxa de Cliques',v:f.pct(m.ctr),a:'#f5c842',i:'📊',c:'+0.4%'},
-    {l:tip('CPM')+' — Custo/Mil Imp.',v:f.brl(m.cpm),a:'#40c4ff',i:'📉',c:'-2.1%'},
-    {l:tip('CPC')+' — Custo por Clique',v:f.brl(m.cpc),a:'#00e5a0',i:'💵',c:'-1.4%'},
-    {l:tip('ROAS')+' — Retorno',v:f.roas(m.roas),a:'#fb16f7',i:'📈',c:'+0.3x'},
-  ].map(d=>'<div class="kpi-card fu" style="--card-accent:'+d.a+'"><div class="kpi-icon">'+d.i+'</div><div class="kpi-label">'+d.l+'</div><div class="kpi-value">'+d.v+'</div><div class="kpi-change up">▲ '+d.c+'</div></div>').join('');
-  renderCreatives('creativesMetaGrid','meta');
-  const camps=getFilteredCampaigns('meta'); const mul=getMultiplier();
-  document.getElementById('metaCampaigns').innerHTML='<div class="platform-card">'
-    +'<div class="platform-header"><div class="platform-name" style="color:var(--meta)">⬡ Meta Ads '
-    +'<span class="pbadge pbadge-meta">'+camps.length+' campanha'+(camps.length!==1?'s':'')+'</span>'
-    +(app.activeCampaignId?'<span style="font-size:11px;color:var(--accent);font-weight:500"> — filtrado</span>':'')
-    +'</div><div style="font-size:13px;color:var(--muted)">'+f.brl(m.spend)+'</div></div>'
-    +'<div class="camp-row hdr camp-meta-cols"><div>Campanha</div><div>Invest.</div><div>Impressões</div><div>Alcance</div><div>Cliques</div><div>Resultados</div><div>💬 Conversas</div><div>'+tip('CPL')+'</div><div>Status</div></div>'
-    +camps.map(c=>'<div class="camp-row camp-meta-cols">'
-      +'<div class="cname">'+c.name+'<small>'+c.accName+'</small></div>'
-      +'<div class="num">'+f.brl((c.spend||0)*mul)+'</div>'
-      +'<div class="num">'+f.numK((c.impressions||0)*mul)+'</div>'
-      +'<div class="num">'+f.numK((c.reach||0)*mul)+'</div>'
-      +'<div class="num">'+f.numK((c.clicks||0)*mul)+'</div>'
-      +'<div class="num">'+Math.round((c.leads||c.conv||0)*mul)+'</div>'
-      +'<div class="num" style="color:var(--accent)">'+Math.round((c.msgs||0)*mul)+'</div>'
-      +'<div class="num '+((c.cpl||0)<15?'pos':(c.cpl||0)>25?'neg':'')+'">'+f.brl(c.cpl||0)+'</div>'
-      +'<div><span class="sdot '+(c.status==='active'?'s-active':'s-paused')+'"></span>'+(c.status==='active'?'Ativa':'Pausada')+'</div>'
-      +'</div>').join('')+'</div>';
+    {l:'Investimento',        v:m.spend,       fmt:f.brl,  a:'#0082fb',i:'💰'},
+    {l:'Impressões',          v:m.impressions, fmt:f.numK, a:'#40c4ff',i:'👁'},
+    {l:'Alcance',             v:m.reach,       fmt:f.numK, a:'#a78bfa',i:'📡'},
+    {l:'Cliques',             v:m.clicks,      fmt:f.numK, a:'#0082fb',i:'🖱️'},
+    {l:'Leads / Resultados',  v:m.leads,       fmt:v=>f.num(Math.round(v)), a:'#00e5a0',i:'🎯'},
+    {l:tip('CPL')+' — Custo por Lead', v:m.cpl, fmt:f.brl, a:'#fb16f7',i:'💲'},
+    {l:tip('CTR')+' — Taxa de Cliques',v:m.ctr, fmt:f.pct, a:'#f5c842',i:'📊'},
+    {l:tip('CPM')+' — Custo/Mil Imp.', v:m.cpm, fmt:f.brl, a:'#40c4ff',i:'📉'},
+    {l:tip('CPC')+' — Custo por Clique',v:m.cpc,fmt:f.brl, a:'#00e5a0',i:'💵'},
+    {l:tip('ROAS')+' — Retorno',        v:m.roas,fmt:f.roas,a:'#fb16f7',i:'📈'},
+  ].map(d=>'<div class="kpi-card fu" style="--card-accent:'+d.a+'"><div class="kpi-icon">'+d.i+'</div><div class="kpi-label">'+d.l+'</div><div class="kpi-value">'+kpiVal(d.v,d.fmt)+'</div></div>').join('');
+
+  // Tabela de campanhas
+  if(!camps.length){
+    document.getElementById('metaCampaigns').innerHTML='<div style="padding:24px;color:var(--muted);text-align:center">Nenhuma campanha encontrada na planilha.</div>';
+  } else {
+    document.getElementById('metaCampaigns').innerHTML='<div class="platform-card">'
+      +'<div class="platform-header"><div class="platform-name" style="color:var(--meta)">⬡ Meta Ads '
+      +'<span class="pbadge pbadge-meta">'+camps.length+' campanha'+(camps.length!==1?'s':'')+'</span>'
+      +(app.activeCampaignId?'<span style="font-size:11px;color:var(--accent);font-weight:500"> — filtrado</span>':'')
+      +'</div><div style="font-size:13px;color:var(--muted)">'+f.brl(m.spend)+'</div></div>'
+      +'<div class="camp-row hdr camp-meta-cols"><div>Campanha</div><div>Invest.</div><div>Impressões</div><div>Alcance</div><div>Resultados</div><div>'+tip('CPL')+'</div><div>ROAS</div><div>Compras</div></div>'
+      +camps.map(c=>{
+        const sp=(c.spend||0)*mul, imp=(c.impressions||0)*mul, rch=(c.reach||0)*mul;
+        const leads=(c.leads||0)*mul, purch=(c.purchases||0)*mul;
+        return '<div class="camp-row camp-meta-cols">'
+          +'<div class="cname">'+c.name+'<small>'+(c.accName||'')+'</small></div>'
+          +'<div class="num">'+f.brl(sp)+'</div>'
+          +'<div class="num">'+(imp>0?f.numK(imp):'<span style="color:var(--muted2)">—</span>')+'</div>'
+          +'<div class="num">'+(rch>0?f.numK(rch):'<span style="color:var(--muted2)">—</span>')+'</div>'
+          +'<div class="num">'+(leads>0?Math.round(leads):'<span style="color:var(--muted2)">—</span>')+'</div>'
+          +'<div class="num '+((c.cpl||0)>0&&(c.cpl||0)<15?'pos':(c.cpl||0)>25?'neg':'')+'">'+((c.cpl||0)>0?f.brl(c.cpl):'<span style="color:var(--muted2)">—</span>')+'</div>'
+          +'<div class="num">'+((c.roas||0)>0?f.roas(c.roas):'<span style="color:var(--muted2)">—</span>')+'</div>'
+          +'<div class="num">'+(purch>0?Math.round(purch):'<span style="color:var(--muted2)">—</span>')+'</div>'
+          +'</div>';
+      }).join('')+'</div>';
+  }
 }
 
 /* ══════════════════════════════════════════
    GOOGLE SECTION
 ══════════════════════════════════════════ */
-function renderGoogleSection() {
-  const accs=getAccounts('google');
+async function renderGoogleSection() {
+  document.getElementById('googleBanner').innerHTML='<div style="color:var(--muted);font-size:13px;padding:8px;display:flex;align-items:center;gap:8px"><span style="animation:pulse 1s infinite;display:inline-block">⬡</span> Carregando dados da planilha...</div>';
+  ['kpiGoogle','googleCampaigns','creativesGoogleGrid','campSelectorGoogle'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.innerHTML='';
+  });
+
+  const accs = await getAccountsWithSheet('google');
+
   if(!accs.length){
-    document.getElementById('googleBanner').innerHTML='<div style="color:var(--muted);font-size:14px;padding:8px">Nenhuma conta Google Ads.</div>';
-    ['kpiGoogle','googleCampaigns','creativesGoogleGrid','campSelectorGoogle'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML='';});
+    document.getElementById('googleBanner').innerHTML='<div style="color:var(--muted);font-size:14px;padding:8px">Nenhuma conta Google Ads configurada. Adicione a URL da planilha em Gestão de Clientes → Configurar APIs.</div>';
     return;
   }
-  const m=getFilteredMetrics('google');
-  const selLabel=app.activeCampaignId?' · <strong>'+app.activeCampaignId+'</strong>':'';
+
+  const errAccs = accs.filter(a => a._error);
+  if (errAccs.length) {
+    const errMsg = errAccs.map(a => '<strong>'+a.clientName+':</strong> '+a._error).join('<br>');
+    document.getElementById('googleBanner').innerHTML=
+      '<div style="width:100%;background:rgba(255,77,109,.08);border:1px solid rgba(255,77,109,.25);border-radius:10px;padding:14px 16px">'
+      +'<div style="font-weight:700;color:var(--red);margin-bottom:6px">⚠ Erro ao carregar planilha</div>'
+      +'<div style="font-size:12px;color:var(--muted);line-height:1.7">'+errMsg+'</div>'
+      +'<div style="margin-top:10px;font-size:12px;padding:10px;background:rgba(255,255,255,.03);border-radius:8px;border-left:3px solid var(--red)">'
+      +'<strong style="color:var(--text)">Como resolver:</strong><br>'
+      +'1. Abra a planilha no Google Sheets<br>'
+      +'2. Menu <strong>Arquivo → Publicar na web</strong><br>'
+      +'3. Selecione a aba correta → escolha <strong>Página da Web</strong><br>'
+      +'4. Clique em <strong>Publicar</strong> → copie a URL gerada (termina em /pubhtml)<br>'
+      +'5. Cole essa URL no campo de configuração do cliente<br>'
+      +'6. Clique em 🔄 Atualizar planilha'
+      +'</div></div>';
+    return;
+  }
+
+  const hasSheet = accs.some(a => a._fromSheet);
+  const mul = getMultiplier();
+  const n = accs.length || 1;
+  const m = {
+    spend:       accs.reduce((s,a)=>s+(a.spend||0),0)*mul,
+    impressions: accs.reduce((s,a)=>s+(a.impressions||0),0)*mul,
+    clicks:      accs.reduce((s,a)=>s+(a.clicks||0),0)*mul,
+    leads:       accs.reduce((s,a)=>s+(a.leads||0),0)*mul,
+    conversions: accs.reduce((s,a)=>s+(a.conversions||0),0)*mul,
+    roas:        accs.reduce((s,a)=>s+(a.roas||0),0)/n,
+    ctr:         accs.reduce((s,a)=>s+(a.ctr||0),0)/n,
+    cpc:         accs.reduce((s,a)=>s+(a.cpc||0),0)/n,
+    cpm:         accs.reduce((s,a)=>s+(a.cpm||0),0)/n,
+    cpl:         accs.reduce((s,a)=>s+(a.cpl||0),0)/n,
+    impressionShare: accs.reduce((s,a)=>s+(a.impressionShare||0),0)/n,
+  };
+
+  const selLabel = app.activeCampaignId ? ' · <strong>'+app.activeCampaignId+'</strong>' : '';
+  const sheetBadge = hasSheet ? ' <span style="font-size:10px;background:rgba(0,229,160,.12);color:var(--green);border-radius:4px;padding:2px 6px;font-weight:600">📊 Planilha</span>' : '';
+
   document.getElementById('googleBanner').innerHTML=
     '<div class="pb-icon">⬡</div>'
-    +'<div><div class="pb-name" style="color:var(--google)">Google Ads</div>'
+    +'<div><div class="pb-name" style="color:var(--google)">Google Ads'+sheetBadge+'</div>'
     +'<div class="pb-sub">'+accs.length+' conta(s) · '+(DATE_LABELS[dateState.filter]||'período')+selLabel+'</div></div>'
     +'<div class="pb-right">'
     +'<div><div class="pb-stat-val" style="color:var(--google)">'+f.brl(m.spend)+'</div><div class="pb-stat-lbl">Investimento</div></div>'
-    +'<div><div class="pb-stat-val">'+f.roas(m.roas)+'</div><div class="pb-stat-lbl">'+tip('ROAS')+'</div></div>'
+    +'<div><div class="pb-stat-val">'+(m.roas>0?f.roas(m.roas):'—')+'</div><div class="pb-stat-lbl">'+tip('ROAS')+'</div></div>'
     +'<div><div class="pb-stat-val">'+f.num(Math.round(m.conversions))+'</div><div class="pb-stat-lbl">Conversões</div></div>'
     +'</div>';
-  renderCampaignSelector('google','campSelectorGoogle');
+
+  // Campanhas
+  const allCamps = accs.flatMap(a=>(a.campaigns||[]).map(c=>({...c,accName:a.name||a.clientName})));
+  if(allCamps.length){
+    const active=app.activeCampaignId;
+    let selHtml='<div class="camp-selector-wrap"><div class="camp-selector-label">📋 Campanha:</div><div class="camp-selector-pills">';
+    selHtml+='<div class="camp-pill'+((!active)?' active':'')+'" onclick="selectCampaign(null,\'google\')"><span class="camp-pill-dot"></span>Todas as campanhas</div>';
+    allCamps.forEach(c=>{
+      const name=c.name.replace(/'/g,"\\'");
+      selHtml+='<div class="camp-pill'+((active===c.name)?' active':'')+'" onclick="selectCampaign(\''+name+'\',\'google\')">';
+      selHtml+='<span class="camp-pill-dot s-active"></span>'+c.name+'</div>';
+    });
+    selHtml+='</div></div>';
+    document.getElementById('campSelectorGoogle').innerHTML=selHtml;
+  }
+
+  const camps = app.activeCampaignId ? allCamps.filter(c=>c.name===app.activeCampaignId) : allCamps;
+
+  const kpiVal = (v, fmt) => v > 0 ? fmt(v) : '<span style="color:var(--muted2);font-size:13px">Sem dados</span>';
   document.getElementById('kpiGoogle').innerHTML=[
-    {l:'Investimento',v:f.brl(m.spend),a:'#ea4335',i:'💰',c:'+6.2%'},
-    {l:'Impressões',v:f.numK(m.impressions),a:'#40c4ff',i:'👁',c:'+14%'},
-    {l:'Cliques',v:f.numK(m.clicks),a:'#a78bfa',i:'🖱️',c:'+10.1%'},
-    {l:'Conversões',v:f.num(Math.round(m.conversions)),a:'#00e5a0',i:'🎯',c:'+7.4%'},
-    {l:tip('CPL')+' — Custo/Lead',v:f.brl(m.cpl),a:'#fb16f7',i:'💲',c:'-5.1%'},
-    {l:tip('CTR')+' — Taxa Cliques',v:f.pct(m.ctr),a:'#f5c842',i:'📊',c:'+1.2%'},
-    {l:tip('CPC')+' — Custo/Clique',v:f.brl(m.cpc),a:'#ea4335',i:'💵',c:'-2.3%'},
-    {l:tip('CPM')+' — Custo/Mil',v:f.brl(m.cpm),a:'#40c4ff',i:'📉',c:'-1.8%'},
-    {l:tip('ROAS')+' — Retorno',v:f.roas(m.roas),a:'#fb16f7',i:'📈',c:'+0.5x'},
-    {l:tip('Imp. Share'),v:f.pct(m.impressionShare),a:'#00e5a0',i:'🔎',c:'+3%'},
-  ].map(d=>'<div class="kpi-card fu" style="--card-accent:'+d.a+'"><div class="kpi-icon">'+d.i+'</div><div class="kpi-label">'+d.l+'</div><div class="kpi-value">'+d.v+'</div><div class="kpi-change up">▲ '+d.c+'</div></div>').join('');
-  renderCreatives('creativesGoogleGrid','google');
-  const camps=getFilteredCampaigns('google'); const mul=getMultiplier();
-  document.getElementById('googleCampaigns').innerHTML='<div class="platform-card">'
-    +'<div class="platform-header"><div class="platform-name" style="color:var(--google)">⬡ Google Ads '
-    +'<span class="pbadge pbadge-google">'+camps.length+' campanha'+(camps.length!==1?'s':'')+'</span>'
-    +(app.activeCampaignId?'<span style="font-size:11px;color:var(--accent);font-weight:500"> — filtrado</span>':'')
-    +'</div><div style="font-size:13px;color:var(--muted)">'+f.brl(m.spend)+'</div></div>'
-    +'<div class="camp-row hdr camp-google-cols"><div>Campanha</div><div>Invest.</div><div>Impressões</div><div>Cliques</div><div>Conv.</div><div>'+tip('CPL')+'</div><div>'+tip('CTR')+'</div><div>Status</div></div>'
-    +camps.map(c=>'<div class="camp-row camp-google-cols">'
-      +'<div class="cname">'+c.name+'<small>'+c.accName+'</small></div>'
-      +'<div class="num">'+f.brl((c.spend||0)*mul)+'</div>'
-      +'<div class="num">'+f.numK((c.impressions||0)*mul)+'</div>'
-      +'<div class="num">'+f.numK((c.clicks||0)*mul)+'</div>'
-      +'<div class="num">'+Math.round((c.leads||c.conv||0)*mul)+'</div>'
-      +'<div class="num '+((c.cpl||0)<12?'pos':(c.cpl||0)>20?'neg':'')+'">'+f.brl(c.cpl||0)+'</div>'
-      +'<div class="num">'+f.pct(c.ctr||0)+'</div>'
-      +'<div><span class="sdot '+(c.status==='active'?'s-active':'s-paused')+'"></span>'+(c.status==='active'?'Ativa':'Pausada')+'</div>'
-      +'</div>').join('')+'</div>';
+    {l:'Investimento',          v:m.spend,       fmt:f.brl,  a:'#ea4335',i:'💰'},
+    {l:'Impressões',            v:m.impressions, fmt:f.numK, a:'#40c4ff',i:'👁'},
+    {l:'Cliques',               v:m.clicks,      fmt:f.numK, a:'#a78bfa',i:'🖱️'},
+    {l:'Conversões',            v:m.conversions, fmt:v=>f.num(Math.round(v)), a:'#00e5a0',i:'🎯'},
+    {l:tip('CPL')+' — Custo/Lead',   v:m.cpl,  fmt:f.brl,  a:'#fb16f7',i:'💲'},
+    {l:tip('CTR')+' — Taxa Cliques', v:m.ctr,  fmt:f.pct,  a:'#f5c842',i:'📊'},
+    {l:tip('CPC')+' — Custo/Clique', v:m.cpc,  fmt:f.brl,  a:'#ea4335',i:'💵'},
+    {l:tip('CPM')+' — Custo/Mil',    v:m.cpm,  fmt:f.brl,  a:'#40c4ff',i:'📉'},
+    {l:tip('ROAS')+' — Retorno',     v:m.roas, fmt:f.roas, a:'#fb16f7',i:'📈'},
+    {l:tip('Imp. Share'),            v:m.impressionShare, fmt:f.pct, a:'#00e5a0',i:'🔎'},
+  ].map(d=>'<div class="kpi-card fu" style="--card-accent:'+d.a+'"><div class="kpi-icon">'+d.i+'</div><div class="kpi-label">'+d.l+'</div><div class="kpi-value">'+kpiVal(d.v,d.fmt)+'</div></div>').join('');
+
+  if(!camps.length){
+    document.getElementById('googleCampaigns').innerHTML='<div style="padding:24px;color:var(--muted);text-align:center">Nenhuma campanha encontrada na planilha.</div>';
+  } else {
+    document.getElementById('googleCampaigns').innerHTML='<div class="platform-card">'
+      +'<div class="platform-header"><div class="platform-name" style="color:var(--google)">⬡ Google Ads '
+      +'<span class="pbadge pbadge-google">'+camps.length+' campanha'+(camps.length!==1?'s':'')+'</span>'
+      +(app.activeCampaignId?'<span style="font-size:11px;color:var(--accent);font-weight:500"> — filtrado</span>':'')
+      +'</div><div style="font-size:13px;color:var(--muted)">'+f.brl(m.spend)+'</div></div>'
+      +'<div class="camp-row hdr camp-google-cols"><div>Campanha</div><div>Invest.</div><div>Impressões</div><div>Cliques</div><div>Conv.</div><div>'+tip('CPL')+'</div><div>'+tip('CTR')+'</div><div>ROAS</div></div>'
+      +camps.map(c=>{
+        const sp=(c.spend||0)*mul;
+        return '<div class="camp-row camp-google-cols">'
+          +'<div class="cname">'+c.name+'<small>'+(c.accName||'')+'</small></div>'
+          +'<div class="num">'+f.brl(sp)+'</div>'
+          +'<div class="num">'+((c.impressions||0)>0?f.numK((c.impressions||0)*mul):'<span style="color:var(--muted2)">—</span>')+'</div>'
+          +'<div class="num">'+((c.clicks||0)>0?f.numK((c.clicks||0)*mul):'<span style="color:var(--muted2)">—</span>')+'</div>'
+          +'<div class="num">'+((c.conversions||c.leads||0)>0?Math.round((c.conversions||c.leads||0)*mul):'<span style="color:var(--muted2)">—</span>')+'</div>'
+          +'<div class="num '+((c.cpl||0)>0&&(c.cpl||0)<12?'pos':(c.cpl||0)>20?'neg':'')+'">'+((c.cpl||0)>0?f.brl(c.cpl):'<span style="color:var(--muted2)">—</span>')+'</div>'
+          +'<div class="num">'+((c.ctr||0)>0?f.pct(c.ctr):'<span style="color:var(--muted2)">—</span>')+'</div>'
+          +'<div class="num">'+((c.roas||0)>0?f.roas(c.roas):'<span style="color:var(--muted2)">—</span>')+'</div>'
+          +'</div>';
+      }).join('')+'</div>';
+  }
 }
 
 /* ══════════════════════════════════════════
@@ -1451,10 +1587,15 @@ function renderClientsAdmin() {
   g.innerHTML=CLIENTS.map(c=>{
     const hasMetaSheet=!!(c.metaSheetUrl);
     const hasGooSheet=!!(c.googleSheetUrl);
+    const hasMetaApi=!!(c.metaAccountId&&c.metaToken);
+    const hasGooApi=!!(c.googleCustomerId&&c.googleRefreshToken);
     const apiStatus=(c.platforms||[]).map(p=>{
-      const ok=p==='meta'?hasMetaSheet:hasGooSheet;
+      const hasSheet=p==='meta'?hasMetaSheet:hasGooSheet;
+      const hasApi=p==='meta'?hasMetaApi:hasGooApi;
+      const ok=hasSheet||hasApi;
+      const label=hasSheet?'📊 Planilha':(hasApi?'API':'—');
       return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;color:'+(ok?'var(--green)':'var(--yellow)')+'">'+
-        (ok?'✓':'⚠')+' '+(p==='meta'?'Meta':'Google')+' Planilha</span>';
+        (ok?'✓':'⚠')+' '+(p==='meta'?'Meta':'Google')+' · '+label+'</span>';
     }).join('');
     return '<div class="account-card" style="display:flex;flex-direction:column;">'
       +'<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px">'
@@ -1469,7 +1610,7 @@ function renderClientsAdmin() {
       +'<div><div class="acc-metric-val">'+(c.accounts||[]).flatMap(a=>a.campaigns||[]).length+'</div><div class="acc-metric-lbl">Camps.</div></div>'
       +'<div><div class="acc-metric-val">'+f.brl((c.accounts||[]).reduce((s,a)=>s+(a.spend||0),0))+'</div><div class="acc-metric-lbl">Invest.</div></div>'
       +'</div>'
-      +'<button class="btn btn-ghost" style="width:100%;font-size:12px;justify-content:center;border-style:dashed" onclick="openDrawer(\'clientApi\',\''+c.id+'\')">📊 Configurar Planilhas</button>'
+      +'<button class="btn btn-ghost" style="width:100%;font-size:12px;justify-content:center;border-style:dashed" onclick="openDrawer(\'clientApi\',\''+c.id+'\')">🔗 Configurar APIs</button>'
       +'</div>';
   }).join('');
 }
@@ -1565,52 +1706,53 @@ function openDrawer(type, id) {
     const cl=CLIENTS.find(x=>x.id===id); if(!cl) return;
     const hasMeta=(cl.platforms||[]).includes('meta');
     const hasGoogle=(cl.platforms||[]).includes('google');
-    const ST=(n,col,txt)=>'<div style="display:flex;gap:10px;align-items:flex-start"><span style="background:'+col+';color:#fff;border-radius:50%;width:20px;height:20px;min-width:20px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;margin-top:1px">'+n+'</span><span>'+txt+'</span></div>';
+    const S=t=>'<code style="background:rgba(255,255,255,.07);padding:1px 5px;border-radius:4px">'+t+'</code>';
+    const ST=(n,col,txt)=>'<div style="display:flex;gap:10px"><span style="background:'+col+';color:#fff;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0">'+n+'</span><span>'+txt+'</span></div>';
     let html='<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">'
       +'<div style="width:40px;height:40px;border-radius:10px;background:'+cl.color+';display:flex;align-items:center;justify-content:center;font-family:Syne,sans-serif;font-weight:700;color:#fff;font-size:15px">'+f.initials(cl.name)+'</div>'
-      +'<div><div class="drawer-title" style="margin:0">'+cl.name+'</div><div style="color:var(--muted);font-size:12px">Conectar Google Planilhas · '+cl.segment+'</div></div></div>'
-      +'<div style="background:rgba(251,22,247,.06);border:1px solid rgba(251,22,247,.18);border-radius:10px;padding:12px 14px;font-size:12px;color:var(--muted);margin-bottom:20px;line-height:1.7">'
-      +'<strong style="color:var(--text)">Como funciona:</strong> Cole o link de compartilhamento da planilha. Ela deve estar com acesso <em style="color:var(--accent)">Qualquer pessoa com o link pode ver</em>.</div>';
+      +'<div><div class="drawer-title" style="margin:0">'+cl.name+'</div><div style="color:var(--muted);font-size:12px">Configuração de APIs · '+cl.segment+'</div></div></div>';
     if(hasMeta){
+      const metaSheetOk = !!(cl.metaSheetUrl);
       html+='<div style="border:1px solid rgba(0,130,251,.25);border-radius:12px;overflow:hidden;margin-bottom:20px">'
         +'<div style="background:rgba(0,130,251,.08);padding:12px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(0,130,251,.15)">'
-        +'<span style="font-size:18px">⬡</span>'
-        +'<div style="font-family:Syne,sans-serif;font-weight:700;color:var(--meta)">Meta Ads — Planilha</div>'
-        +'<div style="margin-left:auto;font-size:11px;color:'+(cl.metaSheetUrl?'var(--green)':'var(--yellow)')+';font-weight:600">'+(cl.metaSheetUrl?'✓ Conectada':'⚠ Não conectada')+'</div></div>'
+        +'<span style="font-size:18px">⬡</span><div style="font-family:Syne,sans-serif;font-weight:700;color:var(--meta)">Meta Ads</div>'
+        +'<div style="margin-left:auto;font-size:11px;color:'+(metaSheetOk?'var(--green)':'var(--yellow)')+';font-weight:600">'+(metaSheetOk?'✓ Planilha configurada':'⚠ Sem planilha')+'</div></div>'
         +'<div style="padding:16px">'
-        +'<div class="fg"><label class="fl">Link da Planilha (Meta Ads)</label>'
-        +'<input class="fi" id="ma_sheet" value="'+(cl.metaSheetUrl||'')+'" placeholder="https://docs.google.com/spreadsheets/d/..." style="font-size:12px"/></div>'
-        +(cl.metaSheetUrl?'<div style="margin-top:4px"><a href="'+cl.metaSheetUrl+'" target="_blank" style="font-size:11px;color:var(--meta);text-decoration:none">↗ Abrir planilha atual</a></div>':'')
-        +'<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12px;color:var(--accent);font-weight:600;padding:4px 0;user-select:none">📖 Como compartilhar →</summary>'
-        +'<div style="background:var(--surface2);border-radius:10px;padding:14px;margin-top:8px;font-size:12px;line-height:1.8;color:var(--muted);display:flex;flex-direction:column;gap:7px">'
-        +ST(1,'var(--meta)','Abra a planilha no Google Sheets.')
-        +ST(2,'var(--meta)','Menu <strong style="color:var(--text)">Arquivo → Compartilhar → Publicar na web</strong>.')
-        +ST(3,'var(--meta)','Selecione a aba desejada, formato <strong style="color:var(--text)">Valores separados por vírgula (.csv)</strong> e clique em <strong style="color:var(--text)">Publicar</strong>.')
-        +ST(4,'var(--meta)','Também vá em <strong style="color:var(--text)">Compartilhar</strong> → "Qualquer pessoa com o link pode ver".')
-        +ST(5,'var(--meta)','Copie o link de compartilhamento e cole aqui acima.')
+        +'<div style="background:rgba(0,130,251,.06);border:1px solid rgba(0,130,251,.15);border-radius:10px;padding:12px 14px;margin-bottom:14px">'
+        +'<div style="font-size:11px;font-weight:700;color:var(--meta);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">📊 Planilha Google Sheets</div>'
+        +'<div class="fg" style="margin-bottom:0"><label class="fl">URL da planilha Meta Ads</label><input class="fi" id="ma_sheet_url" value="'+(cl.metaSheetUrl||'')+'" placeholder="https://docs.google.com/spreadsheets/d/..."/></div>'
+        +'<div style="font-size:11px;color:var(--muted);margin-top:6px">📌 Cole a URL do tipo <strong style="color:var(--text)">.../pubhtml</strong> — gerada em <strong style="color:var(--text)">Arquivo → Publicar na web → Página da Web</strong>.</div>'
+        +'</div>'
+        +'<details><summary style="cursor:pointer;font-size:12px;color:var(--meta);font-weight:600;padding:6px 0;user-select:none">⚙ Configurações de API (avançado) →</summary>'
+        +'<div style="padding-top:12px">'
+        +'<div class="fg"><label class="fl">Meta App ID</label><input class="fi" id="ma_appid" value="'+(cl.metaAppId||'')+'" placeholder="1234567890"/></div>'
+        +'<div class="fg"><label class="fl">Account ID</label><input class="fi" id="ma_accid" value="'+(cl.metaAccountId||'')+'" placeholder="act_1234567890"/></div>'
+        +'<div class="fg"><label class="fl">Access Token</label><input class="fi" type="password" id="ma_token" value="'+(cl.metaToken||'')+'" placeholder="EAAxxxxxxxx..."/></div>'
         +'</div></details></div></div>';
     }
     if(hasGoogle){
+      const googleSheetOk = !!(cl.googleSheetUrl);
       html+='<div style="border:1px solid rgba(234,67,53,.25);border-radius:12px;overflow:hidden;margin-bottom:20px">'
         +'<div style="background:rgba(234,67,53,.07);padding:12px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(234,67,53,.15)">'
-        +'<span style="font-size:18px">⬡</span>'
-        +'<div style="font-family:Syne,sans-serif;font-weight:700;color:var(--google)">Google Ads — Planilha</div>'
-        +'<div style="margin-left:auto;font-size:11px;color:'+(cl.googleSheetUrl?'var(--green)':'var(--yellow)')+';font-weight:600">'+(cl.googleSheetUrl?'✓ Conectada':'⚠ Não conectada')+'</div></div>'
+        +'<span style="font-size:18px">⬡</span><div style="font-family:Syne,sans-serif;font-weight:700;color:var(--google)">Google Ads</div>'
+        +'<div style="margin-left:auto;font-size:11px;color:'+(googleSheetOk?'var(--green)':'var(--yellow)')+';font-weight:600">'+(googleSheetOk?'✓ Planilha configurada':'⚠ Sem planilha')+'</div></div>'
         +'<div style="padding:16px">'
-        +'<div class="fg"><label class="fl">Link da Planilha (Google Ads)</label>'
-        +'<input class="fi" id="ga_sheet" value="'+(cl.googleSheetUrl||'')+'" placeholder="https://docs.google.com/spreadsheets/d/..." style="font-size:12px"/></div>'
-        +(cl.googleSheetUrl?'<div style="margin-top:4px"><a href="'+cl.googleSheetUrl+'" target="_blank" style="font-size:11px;color:var(--google);text-decoration:none">↗ Abrir planilha atual</a></div>':'')
-        +'<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12px;color:var(--google);font-weight:600;padding:4px 0;user-select:none">📖 Como compartilhar →</summary>'
-        +'<div style="background:var(--surface2);border-radius:10px;padding:14px;margin-top:8px;font-size:12px;line-height:1.8;color:var(--muted);display:flex;flex-direction:column;gap:7px">'
-        +ST(1,'var(--google)','Abra a planilha no Google Sheets.')
-        +ST(2,'var(--google)','Menu <strong style="color:var(--text)">Arquivo → Compartilhar → Publicar na web</strong>.')
-        +ST(3,'var(--google)','Selecione a aba desejada, formato <strong style="color:var(--text)">Valores separados por vírgula (.csv)</strong> e clique em <strong style="color:var(--text)">Publicar</strong>.')
-        +ST(4,'var(--google)','Também vá em <strong style="color:var(--text)">Compartilhar</strong> → "Qualquer pessoa com o link pode ver".')
-        +ST(5,'var(--google)','Copie o link de compartilhamento e cole aqui acima.')
+        +'<div style="background:rgba(234,67,53,.06);border:1px solid rgba(234,67,53,.15);border-radius:10px;padding:12px 14px;margin-bottom:14px">'
+        +'<div style="font-size:11px;font-weight:700;color:var(--google);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">📊 Planilha Google Sheets</div>'
+        +'<div class="fg" style="margin-bottom:0"><label class="fl">URL da planilha Google Ads</label><input class="fi" id="ga_sheet_url" value="'+(cl.googleSheetUrl||'')+'" placeholder="https://docs.google.com/spreadsheets/d/..."/></div>'
+        +'<div style="font-size:11px;color:var(--muted);margin-top:6px">📌 Cole a URL do tipo <strong style="color:var(--text)">.../pubhtml</strong> — gerada em <strong style="color:var(--text)">Arquivo → Publicar na web → Página da Web</strong>.</div>'
+        +'</div>'
+        +'<details><summary style="cursor:pointer;font-size:12px;color:var(--google);font-weight:600;padding:6px 0;user-select:none">⚙ Configurações de API (avançado) →</summary>'
+        +'<div style="padding-top:12px">'
+        +'<div class="fg"><label class="fl">Customer ID</label><input class="fi" id="ga_custid" value="'+(cl.googleCustomerId||'')+'" placeholder="123-456-7890"/></div>'
+        +'<div class="fg"><label class="fl">Developer Token</label><input class="fi" type="password" id="ga_devtoken" value="'+(cl.googleDevToken||'')+'" placeholder="dxxxxxxx"/></div>'
+        +'<div class="fg"><label class="fl">OAuth Client ID</label><input class="fi" id="ga_clientid" value="'+(cl.googleClientId||'')+'" placeholder="xxxxx.apps.googleusercontent.com"/></div>'
+        +'<div class="fg"><label class="fl">OAuth Client Secret</label><input class="fi" type="password" id="ga_secret" value="'+(cl.googleClientSecret||'')+'" placeholder="GOCSPX-xxx"/></div>'
+        +'<div class="fg"><label class="fl">Refresh Token</label><input class="fi" type="password" id="ga_refresh" value="'+(cl.googleRefreshToken||'')+'" placeholder="1//xxxxxxxxx"/></div>'
         +'</div></details></div></div>';
     }
     html+='<div style="display:flex;gap:8px"><button class="btn btn-ghost" onclick="closeDrawer()" style="flex:1">Cancelar</button>'
-      +'<button class="btn btn-primary" onclick="saveClientApi(\''+id+'\')" style="flex:1">💾 Salvar links</button></div>';
+      +'<button class="btn btn-primary" onclick="saveClientApi(\''+id+'\')" style="flex:1">💾 Salvar credenciais</button></div>';
     c.innerHTML=html;
   }
 
@@ -1673,19 +1815,23 @@ async function saveEditUser(id){
 async function saveClientApi(id){
   const cl=CLIENTS.find(x=>x.id===id); if(!cl) return;
   if((cl.platforms||[]).includes('meta')){
-    cl.metaSheetUrl=document.getElementById('ma_sheet')?.value?.trim()||'';
+    cl.metaSheetUrl=document.getElementById('ma_sheet_url')?.value?.trim()||'';
+    cl.metaAppId=document.getElementById('ma_appid')?.value||'';
+    cl.metaAccountId=document.getElementById('ma_accid')?.value||'';
+    cl.metaToken=document.getElementById('ma_token')?.value||'';
   }
   if((cl.platforms||[]).includes('google')){
-    cl.googleSheetUrl=document.getElementById('ga_sheet')?.value?.trim()||'';
+    cl.googleSheetUrl=document.getElementById('ga_sheet_url')?.value?.trim()||'';
+    cl.googleCustomerId=document.getElementById('ga_custid')?.value||'';
+    cl.googleDevToken=document.getElementById('ga_devtoken')?.value||'';
+    cl.googleClientId=document.getElementById('ga_clientid')?.value||'';
+    cl.googleClientSecret=document.getElementById('ga_secret')?.value||'';
+    cl.googleRefreshToken=document.getElementById('ga_refresh')?.value||'';
   }
+  invalidateSheetCache(id);
   await persistClient(cl);
   closeDrawer(); renderClientsAdmin();
-  showToast('✓ Planilhas de '+cl.name+' salvas na nuvem');
-  // Carrega os dados imediatamente após salvar
-  if ((cl.platforms||[]).includes('meta') && cl.metaSheetUrl)
-    loadClientSheetData(cl, 'meta').then(()=>{ injectSheetIntoClient(cl,'meta'); renderAll(); });
-  if ((cl.platforms||[]).includes('google') && cl.googleSheetUrl)
-    loadClientSheetData(cl, 'google').then(()=>{ injectSheetIntoClient(cl,'google'); renderAll(); });
+  showToast('✓ Configurações de '+cl.name+' salvas na nuvem');
 }
 
 /* ══════════════════════════════════════════
@@ -1705,7 +1851,15 @@ function setClient(id){
   }
   renderAll();
 }
-function manualRefresh(){ app.lastRefresh=Date.now(); loadAllSheets(); const s=document.querySelector('.nav-item.active')?.id; if(s==='navMeta')renderMetaSection(); if(s==='navGoogle')renderGoogleSection(); }
+function clearCacheAndRefresh(){
+  Object.keys(sheetCache).forEach(k=>delete sheetCache[k]);
+  app.lastRefresh=Date.now(); renderAll();
+  const s=document.querySelector('.nav-item.active')?.id;
+  if(s==='navMeta') renderMetaSection();
+  if(s==='navGoogle') renderGoogleSection();
+  showToast('🔄 Cache limpo — recarregando planilhas...');
+}
+function manualRefresh(){ app.lastRefresh=Date.now(); renderAll(); const s=document.querySelector('.nav-item.active')?.id; if(s==='navMeta')renderMetaSection(); if(s==='navGoogle')renderGoogleSection(); }
 function renderAll(){ renderTabs(); renderOverviewKPIs(); renderAccounts(); renderCreatives('creativesGrid',null); renderChart(); }
 function renderTabs(){
   if(app.currentUser?.role!=='admin') return;
