@@ -824,7 +824,7 @@ function aggregateMetaSheet(rows) {
   const col = resolveColumns(headers);
   console.log('[Sheet] Colunas mapeadas:', JSON.stringify(col));
 
-  const g = (r, k) => col[k] ? r[col[k]] : null;
+  const g = (r, k) => col[k] ? (r[col[k]] ?? null) : null;
   const byCamp = {};
 
   rows.forEach(r => {
@@ -836,18 +836,16 @@ function aggregateMetaSheet(rows) {
       leads:0, purchases:0, purchaseValue:0,
       cartAdds:0, cartValue:0,
       checkouts:0, checkoutValue:0,
-      cpc_sum:0, cpc_n:0,
-      custoResultado_sum:0, custoResultado_n:0,
-      custoCompra_sum:0, custoCompra_n:0,
-      custoCarrinho_sum:0, custoCarrinho_n:0,
-      custoCheckout_sum:0, custoCheckout_n:0,
+      // CPC: média ponderada por spend
+      cpc_spend:0, cpc_weighted:0,
       tiposResultado: new Set(),
       configAtrib: new Set(),
       inicio:'', termino:'', inicioRel:'', fimRel:'',
       _rows:0
     };
     const c = byCamp[name];
-    c.spend          += parseBRL(g(r,'valorUsado'));
+    const spend = parseBRL(g(r,'valorUsado'));
+    c.spend          += spend;
     c.impressions    += parseNum(g(r,'impressoes'));
     const alcVal      = parseNum(g(r,'alcance'));
     if (alcVal > 0)   c.reach += alcVal;
@@ -858,18 +856,14 @@ function aggregateMetaSheet(rows) {
     c.cartValue      += parseBRL(g(r,'valorCarrinho'));
     c.checkouts      += parseNum(g(r,'checkoutIni'));
     c.checkoutValue  += parseBRL(g(r,'valorCheckout'));
-    const cpc         = parseNum(g(r,'cpc'));
-    if (cpc > 0) { c.cpc_sum+=cpc; c.cpc_n++; }
-    const cr          = parseBRL(g(r,'custoResultado'));
-    if (cr > 0) { c.custoResultado_sum+=cr; c.custoResultado_n++; }
-    const cc          = parseBRL(g(r,'custoCompra'));
-    if (cc > 0) { c.custoCompra_sum+=cc; c.custoCompra_n++; }
-    const ca          = parseBRL(g(r,'custoCarrinho'));
-    if (ca > 0) { c.custoCarrinho_sum+=ca; c.custoCarrinho_n++; }
-    const cch         = parseBRL(g(r,'custoCheckout'));
-    if (cch > 0) { c.custoCheckout_sum+=cch; c.custoCheckout_n++; }
+    // CPC: ponderado pelo spend da linha (evita soma indevida)
+    const cpc = parseBRL(g(r,'cpc'));
+    if (cpc > 0 && spend > 0) {
+      c.cpc_weighted += cpc * spend;
+      c.cpc_spend    += spend;
+    }
     const tr = g(r,'tipoResultado'); if (tr && String(tr).trim()) c.tiposResultado.add(String(tr).trim());
-    const ca2= g(r,'configAtrib');  if (ca2 && String(ca2).trim()) c.configAtrib.add(String(ca2).trim());
+    const ca = g(r,'configAtrib');   if (ca && String(ca).trim()) c.configAtrib.add(String(ca).trim());
     if (!c.inicio)    c.inicio    = g(r,'inicio')    ? String(g(r,'inicio')).trim()    : '';
     if (!c.termino)   c.termino   = g(r,'termino')   ? String(g(r,'termino')).trim()   : '';
     if (!c.inicioRel) c.inicioRel = g(r,'inicioRel') ? String(g(r,'inicioRel')).trim() : '';
@@ -881,6 +875,16 @@ function aggregateMetaSheet(rows) {
     .filter(c => c._rows > 0 && (c.spend > 0 || c.impressions > 0))
     .map(c => {
       const conversions = c.purchases > 0 ? c.purchases : c.leads;
+      // Custos calculados (spend / qtd) — mais preciso que somar custo por linha
+      const custoCompra    = c.purchases > 0   ? c.spend / c.purchases   : 0;
+      const custoCheckout  = c.checkouts > 0   ? c.spend / c.checkouts   : 0;
+      const custoCarrinho  = c.cartAdds > 0    ? c.spend / c.cartAdds    : 0;
+      const custoResultado = conversions > 0   ? c.spend / conversions   : 0;
+      const cpl            = custoResultado;
+      // CPC: média ponderada por spend
+      const cpc = c.cpc_spend > 0 ? c.cpc_weighted / c.cpc_spend : 0;
+      const roas = c.purchaseValue > 0 && c.spend > 0 ? c.purchaseValue / c.spend : 0;
+      const cpm  = c.impressions > 0 ? (c.spend / c.impressions) * 1000 : 0;
       return {
         name:         c.name,
         spend:        c.spend,
@@ -894,15 +898,8 @@ function aggregateMetaSheet(rows) {
         checkouts:    c.checkouts,
         checkoutValue:c.checkoutValue,
         conversions,
-        cpl:          conversions > 0 ? c.spend / conversions : 0,
-        cpc:          c.cpc_n > 0 ? c.cpc_sum / c.cpc_n : 0,
-        roas:         c.purchaseValue > 0 && c.spend > 0 ? c.purchaseValue / c.spend : 0,
-        cpm:          c.impressions > 0 ? (c.spend / c.impressions) * 1000 : 0,
-        ctr:          0,
-        custoResultado: c.custoResultado_n > 0 ? c.custoResultado_sum / c.custoResultado_n : 0,
-        custoCompra:    c.custoCompra_n > 0 ? c.custoCompra_sum / c.custoCompra_n : 0,
-        custoCarrinho:  c.custoCarrinho_n > 0 ? c.custoCarrinho_sum / c.custoCarrinho_n : 0,
-        custoCheckout:  c.custoCheckout_n > 0 ? c.custoCheckout_sum / c.custoCheckout_n : 0,
+        cpl, cpc, roas, cpm, ctr: 0,
+        custoResultado, custoCompra, custoCheckout, custoCarrinho,
         tiposResultado: [...c.tiposResultado].join(', '),
         configAtrib:    [...c.configAtrib].join(' / '),
         inicio:    c.inicio,
@@ -946,7 +943,12 @@ async function loadSheetData(clientId, platform) {
       if (text.trim().startsWith('<')) throw new Error('Retornou HTML — planilha sem acesso público');
       const rows = parseCSV(text);
       objs = csvToObjects(rows);
-      if (objs.length) console.log('[Sheet] OK via /gviz — ' + objs.length + ' linhas, ex:', JSON.stringify(Object.entries(objs[0]).slice(0,4)));
+      if (objs.length) {
+        console.log('[Sheet] OK via /gviz — ' + objs.length + ' linhas');
+        console.log('[Sheet] Headers reais:', JSON.stringify(Object.keys(objs[0])));
+        console.log('[Sheet] Linha 1 completa:', JSON.stringify(objs[0]));
+        console.log('[Sheet] Linha 2 completa:', JSON.stringify(objs[1]));
+      }
       else throw new Error('CSV vazio');
     } catch(e) {
       lastError = e;
@@ -1292,46 +1294,68 @@ function getFilteredMetrics(platform) {
 /* ══════════════════════════════════════════
    RENDER OVERVIEW
 ══════════════════════════════════════════ */
-function renderOverviewKPIs() {
-  const m=aggAccounts(getAccounts());
+async function renderOverviewKPIs() {
+  const [metaAccs, googleAccs] = await Promise.all([
+    getAccountsWithSheet('meta'),
+    getAccountsWithSheet('google'),
+  ]);
+  const allAccs = [...metaAccs, ...googleAccs].filter(a => !a._error);
+  const mul = getMultiplier();
+  const spend       = allAccs.reduce((s,a)=>s+(a.spend||0),0)*mul;
+  const impressions = allAccs.reduce((s,a)=>s+(a.impressions||0),0)*mul;
+  const purchases   = allAccs.reduce((s,a)=>s+(a.purchases||0),0)*mul;
+  const leads       = allAccs.reduce((s,a)=>s+(a.leads||0),0)*mul;
+  const purchaseVal = allAccs.reduce((s,a)=>s+(a.purchaseValue||0),0)*mul;
+  const n           = allAccs.length||1;
+  const conv        = purchases||leads;
+  const roas        = purchaseVal>0&&spend>0 ? purchaseVal/spend : allAccs.reduce((s,a)=>s+(a.roas||0),0)/n;
+  const cpl         = conv>0 ? spend/conv : 0;
+  const sd = (v,fmt) => v>0 ? fmt(v) : '<span style="color:var(--muted2);font-size:13px">—</span>';
   const items=[
-    {label:'Investimento Total',  value:f.brl(m.spend),            icon:'💰',change:'+8.4%', accent:'#fb16f7'},
-    {label:'Impressões',          value:f.numK(m.impressions),      icon:'👁', change:'+12.1%',accent:'#40c4ff'},
-    {label:'Cliques',             value:f.numK(m.clicks),           icon:'🖱️',change:'+9.3%', accent:'#a78bfa'},
-    {label:'Leads / Conv.',       value:f.num(Math.round(m.leads)), icon:'🎯',change:'+5.7%', accent:'#00e5a0'},
-    {label:tip('ROAS')+' Médio',  value:f.roas(m.roas),            icon:'📈',change:'+0.3x', accent:'#f5c842'},
-    {label:'Custo por Lead ('+tip('CPL')+')', value:f.brl(m.cpl),  icon:'💲',change:'-4.2%', accent:'#fb16f7'},
+    {label:'Investimento Total',             value:sd(spend,f.brl),             icon:'💰', accent:'#fb16f7'},
+    {label:'Impressões',                     value:sd(impressions,f.numK),       icon:'👁',  accent:'#40c4ff'},
+    {label:'Compras / Resultados',           value:sd(conv,v=>f.num(Math.round(v))), icon:'🎯', accent:'#00e5a0'},
+    {label:'Valor de Conversão',             value:sd(purchaseVal,f.brl),        icon:'💵', accent:'#f5c842'},
+    {label:tip('ROAS')+' Médio',            value:sd(roas,f.roas),              icon:'📈', accent:'#f5c842'},
+    {label:'Custo por Resultado ('+tip('CPL')+")", value:sd(cpl,f.brl),          icon:'💲', accent:'#fb16f7'},
   ];
   const g=document.getElementById('kpiOverview'); g.className='kpi-grid kpi-grid-6';
-  g.innerHTML=items.map(d=>'<div class="kpi-card fu" style="--card-accent:'+d.accent+'">'
-    +'<div class="kpi-icon">'+d.icon+'</div>'
-    +'<div class="kpi-label">'+d.label+'</div>'
-    +'<div class="kpi-value">'+d.value+'</div>'
-    +'<div class="kpi-change up">▲ '+d.change+'</div></div>').join('');
+  g.innerHTML=items.map(d=>'<div class="kpi-card fu" style="--card-accent:'+d.accent+'">'+
+    '<div class="kpi-icon">'+d.icon+'</div>'+
+    '<div class="kpi-label">'+d.label+'</div>'+
+    '<div class="kpi-value">'+d.value+'</div>'+
+    '</div>').join('');
 }
 
-function renderAccounts() {
-  const clients=getClients();
-  const accounts=clients.flatMap(c=>(c.accounts||[]).map(a=>({...a,clientName:c.name})));
-  const g=document.getElementById('accountsGrid');
-  if(!accounts.length){
-    g.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:48px;color:var(--muted)">'
-      +'<div style="font-size:32px;margin-bottom:12px">📭</div>'
-      +'<div style="font-family:Syne,sans-serif;font-weight:700">Nenhuma conta cadastrada</div>'
-      +'<div style="font-size:13px;margin-top:6px">Adicione clientes e contas na aba Clientes</div></div>';
+async function renderAccounts() {
+  const [metaAccs, googleAccs] = await Promise.all([
+    getAccountsWithSheet('meta'),
+    getAccountsWithSheet('google'),
+  ]);
+  const allAccs = [...metaAccs, ...googleAccs].filter(a => !a._error);
+  const g = document.getElementById('accountsGrid');
+  if(!allAccs.length){
+    g.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:48px;color:var(--muted)"><div style="font-size:32px;margin-bottom:12px">📭</div><div style="font-family:Syne,sans-serif;font-weight:700">Nenhuma conta com dados</div><div style="font-size:13px;margin-top:6px">Configure a URL da planilha em Gestão de Clientes → Configurar APIs</div></div>';
     return;
   }
   const mul=getMultiplier();
-  g.innerHTML=accounts.map(a=>'<div class="account-card fu" onclick="showSection(\''+(a.platform==='meta'?'meta':'google')+'\')">'
-    +'<div class="acc-platform-tag" style="color:'+(a.platform==='meta'?'var(--meta)':'var(--google)')+'">'+
-      (a.platform==='meta'?'⬡ Meta Ads':'⬡ Google Ads')+' · '+a.clientName+'</div>'
-    +'<div class="acc-name">'+a.name+'</div>'
-    +'<div class="acc-metrics">'
-    +'<div><div class="acc-metric-val" style="color:'+(a.platform==='meta'?'var(--meta)':'var(--google)')+'">'+f.brl((a.spend||0)*mul)+'</div><div class="acc-metric-lbl">Invest.</div></div>'
-    +'<div><div class="acc-metric-val">'+f.numK((a.clicks||0)*mul)+'</div><div class="acc-metric-lbl">Cliques</div></div>'
-    +'<div><div class="acc-metric-val">'+f.num(Math.round(((a.leads||a.conversions||0)*mul)))+'</div><div class="acc-metric-lbl">Leads</div></div>'
-    +'<div><div class="acc-metric-val">'+f.roas(a.roas||0)+'</div><div class="acc-metric-lbl">'+tip('ROAS')+'</div></div>'
-    +'</div></div>').join('');
+  g.innerHTML=allAccs.map(a=>{
+    const isMeta = a.platform==='meta';
+    const color  = isMeta ? 'var(--meta)' : 'var(--google)';
+    const label  = isMeta ? '⬡ Meta Ads' : '⬡ Google Ads';
+    const conv   = (a.purchases||a.leads||a.conversions||0)*mul;
+    const roas   = a.purchaseValue>0&&a.spend>0 ? a.purchaseValue/a.spend : (a.roas||0);
+    const sec    = isMeta ? 'meta' : 'google';
+    return '<div class="account-card fu" onclick="showSection(\''+sec+'\')">'+
+      '<div class="acc-platform-tag" style="color:'+color+'">'+label+' · '+(a.clientName||a.name)+'</div>'+
+      '<div class="acc-name">'+(a.name||a.clientName||'—')+'</div>'+
+      '<div class="acc-metrics">'+
+      '<div><div class="acc-metric-val" style="color:'+color+'">'+f.brl((a.spend||0)*mul)+'</div><div class="acc-metric-lbl">Invest.</div></div>'+
+      '<div><div class="acc-metric-val">'+f.numK((a.impressions||0)*mul)+'</div><div class="acc-metric-lbl">Impressões</div></div>'+
+      '<div><div class="acc-metric-val">'+f.num(Math.round(conv))+'</div><div class="acc-metric-lbl">Resultados</div></div>'+
+      '<div><div class="acc-metric-val">'+(roas>0?f.roas(roas):'—')+'</div><div class="acc-metric-lbl">'+tip('ROAS')+'</div></div>'+
+      '</div></div>';
+  }).join('');
 }
 
 function renderCreatives(containerId, platform) {
@@ -2015,7 +2039,7 @@ function clearCacheAndRefresh(){
   showToast('🔄 Cache limpo — recarregando planilhas...');
 }
 function manualRefresh(){ app.lastRefresh=Date.now(); renderAll(); const s=document.querySelector('.nav-item.active')?.id; if(s==='navMeta')renderMetaSection(); if(s==='navGoogle')renderGoogleSection(); }
-function renderAll(){ renderTabs(); renderOverviewKPIs(); renderAccounts(); renderCreatives('creativesGrid',null); renderChart(); }
+async function renderAll(){ renderTabs(); await renderOverviewKPIs(); await renderAccounts(); renderCreatives('creativesGrid',null); renderChart(); }
 function renderTabs(){
   if(app.currentUser?.role!=='admin') return;
   document.getElementById('clientTabs').innerHTML=
