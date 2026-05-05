@@ -1014,8 +1014,13 @@ async function loadSheetData(clientId, platform) {
   }
 
   try {
-    const campaigns = aggregateMetaSheet(objs);
-    if (!campaigns.length) return setErr('Nenhuma campanha encontrada. Verifique se a coluna "Nome da campanha" existe na planilha.');
+    // Resolve colunas primeiro para poder filtrar por data
+    const colsForFilter = resolveColumns(Object.keys(objs[0]||{}));
+    const filteredObjs = filterRowsByDate(objs, colsForFilter);
+    console.log('[Sheet] Linhas totais:', objs.length, '| Após filtro de data:', filteredObjs.length);
+
+    const campaigns = aggregateMetaSheet(filteredObjs);
+    if (!campaigns.length) return setErr('Nenhuma campanha no período selecionado. Tente "Todo período" ou ajuste as datas.');
 
     const account = {
       id: clientId + '_' + platform + '_sheet',
@@ -1114,6 +1119,7 @@ function setDateFilter(f) {
     b.classList.toggle('active', b.getAttribute('onclick') === "setDateFilter('"+f+"')"));
   const lbl = document.getElementById('chartPeriodLabel');
   if(lbl) lbl.textContent = DATE_LABELS[f] || 'período';
+  Object.keys(sheetCache).forEach(k=>delete sheetCache[k]);
   renderAll();
   const sec = document.querySelector('.nav-item.active')?.id;
   if(sec==='navMeta') renderMetaSection();
@@ -1128,16 +1134,44 @@ function setCustomDate() {
   document.querySelectorAll('.df-btn').forEach(b=>b.classList.remove('active'));
   const lbl = document.getElementById('chartPeriodLabel');
   if(lbl) lbl.textContent = 'período personalizado';
+  Object.keys(sheetCache).forEach(k=>delete sheetCache[k]);
   renderAll();
   const sec = document.querySelector('.nav-item.active')?.id;
   if(sec==='navMeta') renderMetaSection();
   if(sec==='navGoogle') renderGoogleSection();
 }
 function getMultiplier() {
-  return ({'7d':0.23,'15d':0.48,'30d':1,'90d':2.9,'all':8,'custom':0.45})[dateState.filter]||1;
+  return 1; // Filtro real por data — sem multiplicador falso
 }
 function getChartDays() {
-  return ({'7d':7,'15d':15,'30d':30,'90d':12,'all':12,'custom':7})[dateState.filter]||7;
+  return ({'7d':7,'15d':15,'30d':30,'90d':90,'all':365,'custom':7})[dateState.filter]||30;
+}
+
+// Retorna {from, to} no formato YYYY-MM-DD para o filtro ativo
+function getDateRange() {
+  if(dateState.filter === 'custom' && dateState.from && dateState.to) {
+    return {from: dateState.from, to: dateState.to};
+  }
+  const today = new Date();
+  const to = today.toISOString().slice(0,10);
+  const days = {'7d':7,'15d':15,'30d':30,'90d':90,'all':3650}[dateState.filter] || 30;
+  const fromDate = new Date(today);
+  fromDate.setDate(fromDate.getDate() - days + 1);
+  const from = fromDate.toISOString().slice(0,10);
+  return {from, to};
+}
+
+// Filtra linhas brutas do CSV pelo campo Dia
+function filterRowsByDate(rows, col) {
+  if(!col.dia) return rows; // sem coluna Dia, retorna tudo
+  const {from, to} = getDateRange();
+  // "todo período" não filtra
+  if(dateState.filter === 'all') return rows;
+  return rows.filter(r => {
+    const dia = r[col.dia] ? String(r[col.dia]).trim().slice(0,10) : '';
+    if(!dia) return true; // sem data, inclui
+    return dia >= from && dia <= to;
+  });
 }
 
 /* ══════════════════════════════════════════
